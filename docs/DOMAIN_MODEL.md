@@ -1,0 +1,116 @@
+# Domain model
+
+## Currently implemented (M1 + M2)
+
+Source of truth: `prisma/schema.prisma`. Summary:
+
+| Model | Purpose | Notes |
+|---|---|---|
+| `User` | Auth identity | `role` (`PLAYER`/`COACH`/`ADMIN`), bcrypt `passwordHash`. Only `PLAYER` is reachable from the UI today. |
+| `Athlete` | Stable identity record | 1:1 with `User` for now. Split from `AthleteProfile` so identity and mutable profile data don't share a table — see rationale below. |
+| `AthleteProfile` | Mutable/extended profile | Self-reported competitive level, academy/coach names, physical basics, notes. Never a computed ranking. |
+| `Goal` | Player/coach-chosen objective | Distinct from a *bottleneck* (system-identified) — a goal is something the player deliberately chose. |
+| `Skill` | Seeded reference catalog | 61 rows across 5 categories, from spec section 4. Not user-editable. |
+| `SkillAssessment` | A point-in-time judgment about one skill | Always has `level`, `confidence`, `trend`, `status`, `source`, a required written `summary`, and at least one `Evidence` row — enforced by `createAssessmentAction` creating both in one write, not by a DB constraint. |
+| `Evidence` | The concrete observation backing an assessment | Required `description` (min 10 chars), typed `evidenceType`, timestamped, attributed to a `User`. |
+
+### Why `Athlete` and `AthleteProfile` are separate tables
+
+`Athlete` is the identity anchor everything else (goals, assessments, and later matches/videos)
+foreign-keys to. `AthleteProfile` holds attributes that change independently of identity and are
+queried together (bio, physical stats, academy/coach names, long-term goal). Splitting them means
+profile edits never touch the row other tables reference, and it leaves room for a future
+"profile history" or multi-coach-view feature without reshaping the identity table.
+
+### Why `SkillAssessment.level` is a 5-band enum, not a number
+
+Spec section 3 explicitly forbids "fake numerical skill ratings with no evidence," and section 27
+requires every conclusion to carry an honest confidence level rather than false precision. A
+`0-100` score implies a precision the underlying evidence (a self-reported note, at this stage)
+cannot support. `EMERGING / DEVELOPING / SOLID / STRONG / ADVANCED` is coarse on purpose.
+
+### Why `Evidence` only points at `SkillAssessment` right now
+
+`Evidence` has a required, non-nullable `skillAssessmentId` rather than a generic polymorphic
+`(subjectType, subjectId)` pair. At this milestone, `SkillAssessment` is the *only* thing evidence
+attaches to, so a generic/polymorphic design would be speculative abstraction with no second
+consumer to validate it against. When M8 (match autopsy) or M10 (bottleneck engine) need evidence
+too, the extension is a normal additive migration: either nullable `matchId`/`bottleneckId` columns
+on `Evidence`, or (if the fan-out gets large) a proper join table — decided when there's a second
+real consumer to design against, not before.
+
+### Why `AssessmentSource` has values with no UI path yet
+
+`COACH_OBSERVATION`, `AI_VIDEO_ANALYSIS`, and `MATCH_EVIDENCE` exist in the enum but only
+`SELF_REPORT` is reachable from the current UI. This is a forward-compatible schema decision, not
+fabricated functionality: adding a source value later (M5 CV pipeline, M14 coach collaboration)
+won't require a breaking migration or a data backfill.
+
+## Target schema (full spec section 32 domain, for later milestones)
+
+The spec's suggested table list, reasoned through rather than copied verbatim:
+
+**Already implemented:** `users`, `athletes`, `athlete_profiles`, `goals`, `skills`,
+`skill_assessments`, `evidence` (as `Evidence`, currently scoped to skill assessments).
+
+**M4 (match/video upload infrastructure):**
+- `videos` — one row per uploaded clip: storage key (never a public URL — signed URLs only),
+  duration, resolution, upload status, athlete-owner.
+- `video_jobs` — one row per CV processing job for a video: status (`QUEUED`/`PROCESSING`/`DONE`/`FAILED`),
+  which pipeline stage it's at, error detail. This is the queue contract between the Next.js app and
+  the Python CV service — the web app writes a job, the CV service claims and updates it.
+
+**M5-M7 (CV pipeline, court/player detection, rally reconstruction):**
+- `court_calibrations` — per-video court coordinate mapping, with a confidence score.
+- `pose_data` — per-frame (or sampled) skeleton/joint data, referencing a video + timestamp.
+- `cv_events` — generic structured detections (shuttle position, racket position) with a confidence
+  score per event — never stored without one, per spec section 6/27.
+- `movement_events` — classified movement (split-step, lunge, recovery, etc.) with confidence and a
+  reference back to the `cv_events`/`pose_data` that support the classification.
+- `matches`, `match_sets` — a match is a container of sets; a set is a container of rallies.
+- `rallies` — shot-sequence reconstruction of one rally: serve, sequence, outcome, key decision
+  points (spec section 8).
+- `shots` — one shot within a rally: type (classified, with confidence), player, court location,
+  timing.
+- `players` — for opponent tracking within a match where the opponent isn't a registered `Athlete`.
+
+**M9 (decision engine):**
+- `decision_points` — a rally moment flagged as tactically significant (score situation, position,
+  options available).
+- `decision_evaluations` — the AI's structured judgment on a decision point (best/strong
+  alternative/acceptable/low-percentage/poor/forced/unavoidable — spec section 9's taxonomy), always
+  with confidence and reasoning, never a bare verdict.
+
+**M10 (bottleneck engine):**
+- `bottlenecks` — a system-identified weakness, distinct from a `Goal` (player-chosen). Carries
+  frequency/severity/impact fields and a `status` (primary/secondary/monitor — spec section 5).
+- Bottleneck evidence reuses the `Evidence` extension point described above rather than a new table.
+
+**M14 (coach collaboration):**
+- `coach_observations` — a coach's note, optionally linked to a skill/goal/bottleneck. Spec section
+  17 requires the system to store both AI and human observations *without* either silently
+  overriding the other — `coach_observations` and `skill_assessments` (with `source: AI_VIDEO_ANALYSIS`)
+  coexist rather than one being merged into the other.
+
+**M15 (opponent scouting):**
+- `opponents` — a scouted player (may or may not be a registered `Athlete`).
+- `tactical_patterns` — observed tendencies, always with a confidence and the evidence count behind it.
+
+**M18-M19 (advanced CV, tournaments):**
+- `tournaments`, `tournament_results` — competition history and results, feeding the "international
+  development gap" model in spec section 22 (never a computed ranking — a gap analysis with named
+  dimensions and evidence).
+
+**Deliberately deferred / not planned as literal tables:**
+- `recovery_logs`, `mental_performance_logs` — spec section 28 restricts this product from medical
+  claims. If these land, they'll be scoped tightly to performance language (e.g., "shot selection
+  became more conservative late-game" — spec section 21), not physiological/medical fields, and
+  will be designed against real requirements from M13 (longitudinal engine) rather than speculated
+  now.
+- `ai_recommendations`, `recommendation_outcomes` — reasonable future tables (M18/M20 territory:
+  did a recommended intervention actually get followed, did it help), deferred until the
+  Development Recommendation Engine (spec section 18) exists to populate them.
+
+The guiding rule for all of the above, restated from spec section 34/35: build the table when a
+milestone needs to write to it, not before. A schema with columns nothing writes to is exactly the
+kind of fabricated-looking functionality section 41 warns against.

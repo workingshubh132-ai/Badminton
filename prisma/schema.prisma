@@ -1,0 +1,253 @@
+// Badminton Performance Intelligence System — domain schema.
+// Scope: M1 (auth + athlete identity) and M2 (athlete performance model:
+// goals, skill catalog, skill assessments, evidence). See docs/DOMAIN_MODEL.md
+// for the full target schema and how later milestones extend this file.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Auth / identity
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  PLAYER
+  COACH
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         UserRole @default(PLAYER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  athlete            Athlete?
+  skillAssessments   SkillAssessment[] @relation("AssessmentAuthor")
+  evidenceEntries    Evidence[]        @relation("EvidenceAuthor")
+}
+
+// ---------------------------------------------------------------------------
+// Athlete identity + profile
+//
+// Athlete = stable identity record. AthleteProfile = mutable/extended
+// attributes queried separately from identity (bio, physical stats, academy
+// info). Split so profile edits never touch the identity row and so a future
+// coach->athlete relationship can hang off Athlete without reshaping profile
+// data.
+// ---------------------------------------------------------------------------
+
+enum Hand {
+  LEFT
+  RIGHT
+}
+
+enum CompetitiveLevel {
+  BEGINNER
+  INTERMEDIATE
+  CLUB_COMPETITIVE
+  DISTRICT_OR_STATE_COMPETITIVE
+  NATIONAL_COMPETITIVE
+  INTERNATIONAL_ASPIRANT
+}
+
+model Athlete {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName      String
+  dateOfBirth   DateTime?
+  dominantHand  Hand?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile           AthleteProfile?
+  goals             Goal[]
+  skillAssessments  SkillAssessment[]
+}
+
+model AthleteProfile {
+  id                   String           @id @default(cuid())
+  athleteId            String           @unique
+  athlete              Athlete          @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  // Self-reported, not a computed/verified ranking. Always render this
+  // labeled as self-reported — see spec section 22 (no fake ranking claims).
+  currentLevel         CompetitiveLevel @default(INTERMEDIATE)
+  longTermGoal         String?
+  academyName          String?
+  coachName            String?
+  heightCm             Int?
+  weightKg             Float?
+  yearsPlaying         Int?
+  trainingDaysPerWeek  Int?
+  playingStyleNotes    String?
+  bio                  String?
+  updatedAt            DateTime         @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Goals
+// ---------------------------------------------------------------------------
+
+enum GoalCategory {
+  TECHNICAL
+  MOVEMENT
+  TACTICAL
+  PHYSICAL
+  MENTAL
+  COMPETITION
+}
+
+enum GoalPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum GoalStatus {
+  ACTIVE
+  ACHIEVED
+  ABANDONED
+}
+
+model Goal {
+  id          String       @id @default(cuid())
+  athleteId   String
+  athlete     Athlete      @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  category    GoalCategory
+  priority    GoalPriority @default(MEDIUM)
+  status      GoalStatus   @default(ACTIVE)
+  targetDate  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([athleteId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Skill catalog + assessments + evidence
+//
+// Skill is a seeded reference catalog (see prisma/seed.ts), not user-editable
+// in the product UI. SkillAssessment never carries a bare numeric score —
+// every assessment stores a qualitative level, a confidence, a source, and a
+// required written rationale, and always starts PROVISIONAL. Evidence rows
+// are the only thing that can move an assessment's status/confidence.
+// ---------------------------------------------------------------------------
+
+enum SkillCategory {
+  TECHNICAL
+  MOVEMENT
+  TACTICAL
+  PHYSICAL
+  MENTAL
+}
+
+model Skill {
+  id          String        @id @default(cuid())
+  key         String        @unique
+  name        String
+  category    SkillCategory
+  description String?
+  sortOrder   Int           @default(0)
+
+  assessments SkillAssessment[]
+
+  @@index([category, sortOrder])
+}
+
+enum SkillLevel {
+  EMERGING
+  DEVELOPING
+  SOLID
+  STRONG
+  ADVANCED
+}
+
+enum ConfidenceLevel {
+  VERY_LOW
+  LOW
+  MODERATE
+  HIGH
+  VERY_HIGH
+}
+
+enum Trend {
+  IMPROVING
+  STABLE
+  DECLINING
+  UNKNOWN
+}
+
+enum AssessmentStatus {
+  PROVISIONAL
+  CONFIRMED
+}
+
+// Only SELF_REPORT is reachable from the product UI in M1/M2 — there is no
+// coach-collaboration surface (M14) or CV pipeline (M5+) yet. The other
+// values exist so the schema does not need a breaking migration when those
+// milestones land.
+enum AssessmentSource {
+  SELF_REPORT
+  COACH_OBSERVATION
+  AI_VIDEO_ANALYSIS
+  MATCH_EVIDENCE
+}
+
+model SkillAssessment {
+  id              String            @id @default(cuid())
+  athleteId       String
+  athlete         Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  skillId         String
+  skill           Skill             @relation(fields: [skillId], references: [id])
+  level           SkillLevel
+  confidence      ConfidenceLevel
+  trend           Trend             @default(UNKNOWN)
+  status          AssessmentStatus  @default(PROVISIONAL)
+  source          AssessmentSource  @default(SELF_REPORT)
+  summary         String
+  assessedAt      DateTime          @default(now())
+  createdByUserId String
+  createdByUser   User              @relation("AssessmentAuthor", fields: [createdByUserId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  evidence Evidence[]
+
+  @@index([athleteId, skillId])
+  @@index([athleteId, status])
+}
+
+enum EvidenceType {
+  SELF_NOTE
+  TRAINING_OBSERVATION
+  COACH_NOTE
+  MATCH_OBSERVATION
+  VIDEO_REVIEW
+  STATISTIC
+}
+
+model Evidence {
+  id                String          @id @default(cuid())
+  skillAssessmentId String
+  skillAssessment   SkillAssessment @relation(fields: [skillAssessmentId], references: [id], onDelete: Cascade)
+  evidenceType      EvidenceType
+  description       String
+  observedAt        DateTime?
+  createdByUserId   String
+  createdByUser     User            @relation("EvidenceAuthor", fields: [createdByUserId], references: [id])
+  createdAt         DateTime        @default(now())
+
+  @@index([skillAssessmentId])
+}
