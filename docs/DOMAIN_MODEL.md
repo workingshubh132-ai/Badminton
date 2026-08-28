@@ -1,6 +1,6 @@
 # Domain model
 
-## Currently implemented (M1 + M2)
+## Currently implemented (M1 + M2 + M4)
 
 Source of truth: `prisma/schema.prisma`. Summary:
 
@@ -12,7 +12,11 @@ Source of truth: `prisma/schema.prisma`. Summary:
 | `Goal` | Player/coach-chosen objective | Distinct from a *bottleneck* (system-identified) — a goal is something the player deliberately chose. |
 | `Skill` | Seeded reference catalog | 61 rows across 5 categories, from spec section 4. Not user-editable. |
 | `SkillAssessment` | A point-in-time judgment about one skill | Always has `level`, `confidence`, `trend`, `status`, `source`, a required written `summary`, and at least one `Evidence` row — enforced by `createAssessmentAction` creating both in one write, not by a DB constraint. |
-| `Evidence` | The concrete observation backing an assessment | Required `description` (min 10 chars), typed `evidenceType`, timestamped, attributed to a `User`. |
+| `Evidence` | The concrete observation backing a claim | Generalized in M4 — see "Generalized evidence model (M4)" below. Attaches to a `SkillAssessment`, `Match`, or `Video` (exactly one, DB-enforced). |
+| `Match` | A recorded match | Athlete, opponent, date, result, free-text score/notes. `status` stays `UNPROCESSED` until a real CV pipeline exists (M7+). |
+| `Video` | An uploaded video file | `MATCH`/`TRAINING`/`TECHNIQUE`/`OTHER`. Full status state machine — see `docs/VIDEO_INTELLIGENCE.md` "Video lifecycle." Metadata (duration/dimensions/frame rate) only ever populated from a real prober, never guessed. |
+| `VideoJob` | A processing or CV-analysis attempt for a video | See `docs/VIDEO_INTELLIGENCE.md` "Job architecture" for why this is one table with a `type` discriminator rather than two. |
+| `Rally`, `Event` | Schema-only foundation for M7-M9 | No code path writes either table yet — see `docs/VIDEO_INTELLIGENCE.md` "Match / Rally / Event foundation." |
 
 ### Why `Athlete` and `AthleteProfile` are separate tables
 
@@ -29,15 +33,40 @@ requires every conclusion to carry an honest confidence level rather than false 
 `0-100` score implies a precision the underlying evidence (a self-reported note, at this stage)
 cannot support. `EMERGING / DEVELOPING / SOLID / STRONG / ADVANCED` is coarse on purpose.
 
-### Why `Evidence` only points at `SkillAssessment` right now
+### Generalized evidence model (M4)
 
-`Evidence` has a required, non-nullable `skillAssessmentId` rather than a generic polymorphic
-`(subjectType, subjectId)` pair. At this milestone, `SkillAssessment` is the *only* thing evidence
-attaches to, so a generic/polymorphic design would be speculative abstraction with no second
-consumer to validate it against. When M8 (match autopsy) or M10 (bottleneck engine) need evidence
-too, the extension is a normal additive migration: either nullable `matchId`/`bottleneckId` columns
-on `Evidence`, or (if the fan-out gets large) a proper join table — decided when there's a second
-real consumer to design against, not before.
+M2 shipped `Evidence` with a required, non-nullable `skillAssessmentId`, explicitly deferring
+generalization until there was a second real consumer to design against (see the git history of
+this file for that original reasoning). M4's product spec explicitly calls for generalizing it
+("GENERALIZED EVIDENCE SYSTEM" is one of the milestone's named objectives), and now gives it two
+real second/third consumers — `Match` and `Video` — so the extension happened for real:
+
+- `skillAssessmentId`, `matchId`, `videoId` are all nullable FKs on `Evidence`; a Postgres `CHECK`
+  constraint (`evidence_exactly_one_subject`, added by hand in the M4 migration since Prisma has no
+  schema-level `CHECK` syntax) guarantees exactly one is set per row — real referential integrity,
+  not application-level convention alone.
+- A generic polymorphic `(subjectType, subjectId)` pair was deliberately **not** used — it would
+  give up real foreign-key constraints (Postgres can't enforce "this ID exists in whichever table
+  `subjectType` names"), and Prisma can't express a polymorphic relation as a typed relation at
+  all. Named nullable FKs, one per real subject, keep every relation type-safe and enforced.
+- `Evidence.athleteId` was added as a **direct**, always-present column, even though it's always
+  derivable by joining through whichever subject FK is set. This redundancy is deliberate: every
+  authorization check (`WHERE athleteId = currentAthleteId`) becomes uniform regardless of subject
+  type, rather than needing a different join per subject and risking a missed case. Direct
+  ownership columns for authorization simplicity are a standard, worthwhile trade on a
+  security-sensitive table.
+- `confidence`, `timestampSeconds`, and `metadata` were added as nullable fields per the spec's
+  explicit field list for this milestone's evidence model, even though only `timestampSeconds` has
+  a real writer today (the video-evidence form). `confidence` and `metadata` are reserved for
+  CV/AI-sourced evidence (M5+) — unlike most "no writer yet" decisions in this codebase, these were
+  added now because generalizing this exact model, with this exact field list, *is* the M4 work
+  item the spec asked for, not a speculative extension ahead of it.
+- `rallyId`, `eventId`, and `hypothesisId` were deliberately **not** added. `Rally`/`Event` exist as
+  schema-only foundation with no writer (see `docs/VIDEO_INTELLIGENCE.md`), and no `Hypothesis`
+  table exists at all — the master spec explicitly says not to build a hypothesis engine before
+  it's genuinely part of the milestone (that's M10). These are the documented next extension
+  points, added when M7/M9/M10 give them a real producer, following the same pattern this file
+  already used for M2→M4.
 
 ### Why `AssessmentSource` has values with no UI path yet
 
@@ -51,27 +80,23 @@ won't require a breaking migration or a data backfill.
 The spec's suggested table list, reasoned through rather than copied verbatim:
 
 **Already implemented:** `users`, `athletes`, `athlete_profiles`, `goals`, `skills`,
-`skill_assessments`, `evidence` (as `Evidence`, currently scoped to skill assessments).
-
-**M4 (match/video upload infrastructure):**
-- `videos` — one row per uploaded clip: storage key (never a public URL — signed URLs only),
-  duration, resolution, upload status, athlete-owner.
-- `video_jobs` — one row per CV processing job for a video: status (`QUEUED`/`PROCESSING`/`DONE`/`FAILED`),
-  which pipeline stage it's at, error detail. This is the queue contract between the Next.js app and
-  the Python CV service — the web app writes a job, the CV service claims and updates it.
+`skill_assessments`, `evidence` (generalized in M4 — see above), `matches` (as `Match`), `videos`
+(as `Video`), `video_jobs` (as `VideoJob`, unified across the processing/analysis job types — see
+`docs/VIDEO_INTELLIGENCE.md`), plus schema-only `rallies`/events (as `Rally`/`Event`, no writer
+yet).
 
 **M5-M7 (CV pipeline, court/player detection, rally reconstruction):**
 - `court_calibrations` — per-video court coordinate mapping, with a confidence score.
 - `pose_data` — per-frame (or sampled) skeleton/joint data, referencing a video + timestamp.
-- `cv_events` — generic structured detections (shuttle position, racket position) with a confidence
-  score per event — never stored without one, per spec section 6/27.
-- `movement_events` — classified movement (split-step, lunge, recovery, etc.) with confidence and a
-  reference back to the `cv_events`/`pose_data` that support the classification.
-- `matches`, `match_sets` — a match is a container of sets; a set is a container of rallies.
-- `rallies` — shot-sequence reconstruction of one rally: serve, sequence, outcome, key decision
-  points (spec section 8).
-- `shots` — one shot within a rally: type (classified, with confidence), player, court location,
-  timing.
+- Generic structured detections (shuttle position, racket position, classified shots and
+  movement — spec's `cv_events`/`movement_events`/`shots`) reuse the `Event` model added in M4
+  (`category`, `shotType`, `confidence`, `courtX`/`courtY`, `metadata`) rather than three more
+  tables — `Event` was already designed to carry exactly this shape. `Rally` (also added in M4,
+  schema-only so far) gets its first real writer here: shot-sequence reconstruction of one rally —
+  serve, sequence, outcome, key decision points (spec section 8).
+- `match_sets` — a match is a container of sets; a set is a container of rallies. Not yet modeled;
+  `Match.score` stays free text (see `docs/VIDEO_INTELLIGENCE.md` "Match / Rally / Event
+  foundation") until this exists to populate it for real.
 - `players` — for opponent tracking within a match where the opponent isn't a registered `Athlete`.
 
 **M9 (decision engine):**

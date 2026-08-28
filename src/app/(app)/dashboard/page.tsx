@@ -15,21 +15,23 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 export default async function DashboardPage() {
   const { athlete } = await requireAthlete();
 
-  const [totalSkills, assessments, activeGoals, evidenceCount] = await Promise.all([
-    db.skill.count(),
-    db.skillAssessment.findMany({
-      where: { athleteId: athlete.id },
-      orderBy: { assessedAt: "desc" },
-      include: { skill: true },
-    }),
-    db.goal.findMany({
-      where: { athleteId: athlete.id, status: "ACTIVE" },
-      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
-    }),
-    db.evidence.count({
-      where: { skillAssessment: { athleteId: athlete.id } },
-    }),
-  ]);
+  const [totalSkills, assessments, activeGoals, evidenceCount, matchCount, videoCount, latestMatch] =
+    await Promise.all([
+      db.skill.count(),
+      db.skillAssessment.findMany({
+        where: { athleteId: athlete.id },
+        orderBy: { assessedAt: "desc" },
+        include: { skill: true },
+      }),
+      db.goal.findMany({
+        where: { athleteId: athlete.id, status: "ACTIVE" },
+        orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+      }),
+      db.evidence.count({ where: { athleteId: athlete.id } }),
+      db.match.count({ where: { athleteId: athlete.id } }),
+      db.video.count({ where: { athleteId: athlete.id, deletedAt: null } }),
+      db.match.findFirst({ where: { athleteId: athlete.id }, orderBy: { playedAt: "desc" } }),
+    ]);
 
   const latestBySkill = new Map<string, (typeof assessments)[number]>();
   for (const a of assessments) {
@@ -69,9 +71,12 @@ export default async function DashboardPage() {
             <p className="text-sm text-muted">
               The bottleneck engine needs recurring evidence across multiple matches — frequency,
               severity, and how often opponents exploit an issue — before it can responsibly name
-              one weakness as your biggest limiter. That requires match/video analysis, which isn&apos;t
-              built yet (it&apos;s a later milestone). Right now you can log self-reported skill
-              assessments; use those honestly rather than as a substitute for this section.
+              one weakness as your biggest limiter. That requires computer-vision analysis of match
+              video, which isn&apos;t built yet (it&apos;s a later milestone) — {matchCount > 0
+                ? `you have ${matchCount} match${matchCount === 1 ? "" : "es"} recorded, but none analyzed.`
+                : "you can start recording matches now so there's a backlog once analysis exists."}{" "}
+              Right now you can log self-reported skill assessments and match/video evidence; use
+              those honestly rather than as a substitute for this section.
             </p>
           </div>
         )}
@@ -137,13 +142,26 @@ export default async function DashboardPage() {
         <CardHeader>
           <CardTitle>Latest match insight</CardTitle>
         </CardHeader>
-        <CardDescription>
-          No matches uploaded yet. Match upload and analysis are a later milestone — once available,
-          the single most important new discovery from your latest match will appear here.
-        </CardDescription>
+        {latestMatch ? (
+          <CardDescription>
+            Your latest recorded match was{" "}
+            <Link href={`/matches/${latestMatch.id}`} className="text-accent hover:underline">
+              vs {latestMatch.opponentName || "an unnamed opponent"} on{" "}
+              {new Date(latestMatch.playedAt).toLocaleDateString()}
+            </Link>
+            . Analysis isn&apos;t available yet — no computer-vision engine is configured (see its
+            video&apos;s status page for exactly why) — so there is no insight to show here yet.
+            This section will surface the single most important new discovery once analysis exists.
+          </CardDescription>
+        ) : (
+          <CardDescription>
+            No matches recorded yet. <Link href="/matches/new" className="text-accent hover:underline">Record one</Link> —
+            video and analysis can be added anytime after.
+          </CardDescription>
+        )}
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-5">
         <Card>
           <p className="text-2xl font-semibold text-foreground">{coveragePct}%</p>
           <p className="mt-1 text-sm text-muted">
@@ -157,6 +175,14 @@ export default async function DashboardPage() {
         <Card>
           <p className="text-2xl font-semibold text-foreground">{activeGoals.length}</p>
           <p className="mt-1 text-sm text-muted">active goals</p>
+        </Card>
+        <Card>
+          <p className="text-2xl font-semibold text-foreground">{matchCount}</p>
+          <p className="mt-1 text-sm text-muted">matches recorded</p>
+        </Card>
+        <Card>
+          <p className="text-2xl font-semibold text-foreground">{videoCount}</p>
+          <p className="mt-1 text-sm text-muted">videos uploaded</p>
         </Card>
       </div>
 

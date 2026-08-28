@@ -88,8 +88,43 @@ export const assessmentSchema = z.object({
     .max(1000),
 });
 
+const matchResults = ["WIN", "LOSS", "UNKNOWN"] as const;
+
+export const matchSchema = z.object({
+  opponentName: z.string().trim().max(150).optional().or(z.literal("").transform(() => undefined)),
+  playedAt: z.coerce.date(),
+  competitionName: z.string().trim().max(200).optional().or(z.literal("").transform(() => undefined)),
+  format: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
+  result: z.enum(matchResults),
+  score: z.string().trim().max(200).optional().or(z.literal("").transform(() => undefined)),
+  notes: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+});
+
+const videoTypes = ["MATCH", "TRAINING", "TECHNIQUE", "OTHER"] as const;
+
+export const videoUploadMetaSchema = z.object({
+  videoType: z.enum(videoTypes),
+  matchId: z.string().trim().min(1).optional().or(z.literal("").transform(() => undefined)),
+  originalFilename: z.string().trim().min(1).max(255),
+  clientMimeType: z.string().trim().max(100).optional().or(z.literal("").transform(() => undefined)),
+});
+
+// Evidence attached directly to a Match or Video (the generalized evidence
+// model, M4) rather than to a SkillAssessment. Optional timestamp lets a
+// player cite a specific moment in a video.
+export const subjectEvidenceSchema = evidenceOnlySchema.extend({
+  timestampSeconds: z.coerce
+    .number()
+    .min(0)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type AthleteProfileInput = z.infer<typeof athleteProfileSchema>;
 export type GoalInput = z.infer<typeof goalSchema>;
 export type AssessmentInput = z.infer<typeof assessmentSchema>;
+export type MatchInput = z.infer<typeof matchSchema>;
+export type VideoUploadMetaInput = z.infer<typeof videoUploadMetaSchema>;
+export type SubjectEvidenceInput = z.infer<typeof subjectEvidenceSchema>;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/onboarding", "/goals", "/skills", "/profile"];
+const PROTECTED_PREFIXES = ["/dashboard", "/onboarding", "/goals", "/skills", "/profile", "/matches", "/videos"];
 const AUTH_PAGES = ["/login", "/signup"];
 
 export default auth((req) => {

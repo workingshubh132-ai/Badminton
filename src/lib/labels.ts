@@ -1,12 +1,19 @@
 import type {
   AssessmentStatus,
   ConfidenceLevel,
+  EvidenceSource,
   GoalCategory,
   GoalPriority,
   GoalStatus,
+  MatchResult,
+  MatchStatus,
   SkillCategory,
   SkillLevel,
   Trend,
+  VideoJobStatus,
+  VideoJobType,
+  VideoStatus,
+  VideoType,
 } from "@/generated/prisma/client";
 
 export const confidenceLabel: Record<ConfidenceLevel, string> = {
@@ -88,4 +95,109 @@ export const competitiveLevelLabel: Record<string, string> = {
   DISTRICT_OR_STATE_COMPETITIVE: "District / State competitive",
   NATIONAL_COMPETITIVE: "National competitive",
   INTERNATIONAL_ASPIRANT: "International aspirant",
+};
+
+export const videoTypeLabel: Record<VideoType, string> = {
+  MATCH: "Match",
+  TRAINING: "Training",
+  TECHNIQUE: "Technique",
+  OTHER: "Other",
+};
+
+// Copy mirrors spec section 15 ("Analysis Status Experience") — every
+// status must be understandable and, where nothing has happened yet, must
+// say so honestly rather than implying progress.
+export const videoStatusLabel: Record<VideoStatus, string> = {
+  UPLOAD_PENDING: "Upload starting…",
+  UPLOADING: "Uploading…",
+  UPLOADED: "Uploaded — video is safely stored",
+  VALIDATING: "Checking video format and quality…",
+  VALID: "Valid",
+  INVALID: "Invalid — could not be processed",
+  PROCESSING: "Extracting video details…",
+  READY_FOR_ANALYSIS: "Ready for analysis",
+  ANALYZING: "Analysis in progress…",
+  ANALYZED: "Analysis complete",
+  FAILED: "Something went wrong processing this video",
+  DELETED: "Deleted",
+};
+
+// Longer, honest explanation shown on the video detail page — see spec
+// section 15's worked examples ("Video is safely stored.", "CV analysis is
+// not yet available for this video.").
+export const videoStatusExplanation: Record<VideoStatus, string> = {
+  UPLOAD_PENDING: "Preparing to receive this video.",
+  UPLOADING: "Your video is uploading. Keep this page open.",
+  UPLOADED: "Video is safely stored and about to be checked.",
+  VALIDATING: "Checking that this file is a readable video and within size limits.",
+  VALID: "Passed format checks.",
+  INVALID: "This file could not be processed. Delete it and try re-uploading — often re-exporting as MP4 (H.264) fixes it.",
+  PROCESSING: "Extracting duration, dimensions, and other details from the video.",
+  READY_FOR_ANALYSIS: "Video is ready for computer-vision analysis.",
+  ANALYZING: "Checking whether computer-vision analysis can run on this video.",
+  ANALYZED: "A computer-vision analysis pass has completed for this video.",
+  FAILED: "Something went wrong while processing this video. This is often temporary — retry, or delete and re-upload.",
+  DELETED: "This video has been deleted.",
+};
+
+export const videoStatusTone: Record<VideoStatus, "neutral" | "success" | "warning" | "danger" | "info" | "accent"> = {
+  UPLOAD_PENDING: "neutral",
+  UPLOADING: "info",
+  UPLOADED: "info",
+  VALIDATING: "info",
+  VALID: "info",
+  INVALID: "danger",
+  PROCESSING: "info",
+  READY_FOR_ANALYSIS: "accent",
+  ANALYZING: "info",
+  ANALYZED: "success",
+  FAILED: "danger",
+  DELETED: "neutral",
+};
+
+export const matchResultLabel: Record<MatchResult, string> = {
+  WIN: "Win",
+  LOSS: "Loss",
+  UNKNOWN: "Unknown",
+};
+
+export const matchResultTone: Record<MatchResult, "success" | "danger" | "neutral"> = {
+  WIN: "success",
+  LOSS: "danger",
+  UNKNOWN: "neutral",
+};
+
+export const matchStatusLabel: Record<MatchStatus, string> = {
+  UNPROCESSED: "Not yet analyzed",
+  PROCESSING: "Analysis in progress",
+  PARTIALLY_PROCESSED: "Partially analyzed",
+  PROCESSED: "Analyzed",
+};
+
+export const videoJobTypeLabel: Record<VideoJobType, string> = {
+  PROCESSING: "Processing",
+  CV_ANALYSIS: "CV analysis",
+};
+
+export const videoJobStatusLabel: Record<VideoJobStatus, string> = {
+  PENDING: "Pending",
+  RUNNING: "Running",
+  SUCCEEDED: "Succeeded",
+  FAILED: "Failed",
+  UNAVAILABLE: "Unavailable",
+};
+
+export const videoJobStatusTone: Record<VideoJobStatus, "neutral" | "success" | "warning" | "danger" | "info"> = {
+  PENDING: "neutral",
+  RUNNING: "info",
+  SUCCEEDED: "success",
+  FAILED: "danger",
+  UNAVAILABLE: "warning",
+};
+
+export const evidenceSourceLabel: Record<EvidenceSource, string> = {
+  PLAYER: "You",
+  COACH: "Coach",
+  CV_SYSTEM: "Computer vision",
+  AI_SYSTEM: "AI analysis",
 };

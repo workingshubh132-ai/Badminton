@@ -6,6 +6,7 @@ const BASE_URL = `http://localhost:${PORT}`;
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false, // Tests share one dev-server DB; running serially avoids cross-test data races.
+  workers: 1, // fullyParallel:false only serializes within a file — cap workers so files don't race each other either.
   retries: 0,
   reporter: "list",
   use: {

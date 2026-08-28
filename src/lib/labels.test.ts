@@ -2,24 +2,42 @@ import { describe, expect, it } from "vitest";
 import {
   AssessmentStatus,
   ConfidenceLevel,
+  EvidenceSource,
   GoalCategory,
   GoalPriority,
   GoalStatus,
+  MatchResult,
+  MatchStatus,
   SkillCategory,
   SkillLevel,
   Trend,
+  VideoJobStatus,
+  VideoJobType,
+  VideoStatus,
+  VideoType,
 } from "@/generated/prisma/client";
 import {
   assessmentStatusLabel,
   confidenceLabel,
   confidenceTone,
+  evidenceSourceLabel,
   goalCategoryLabel,
   goalPriorityLabel,
   goalStatusLabel,
+  matchResultLabel,
+  matchResultTone,
+  matchStatusLabel,
   skillCategoryLabel,
   skillLevelLabel,
   trendLabel,
   trendTone,
+  videoJobStatusLabel,
+  videoJobStatusTone,
+  videoJobTypeLabel,
+  videoStatusExplanation,
+  videoStatusLabel,
+  videoStatusTone,
+  videoTypeLabel,
 } from "@/lib/labels";
 
 // The UI never falls back to the raw enum key for a value the schema defines — every value
@@ -59,5 +77,31 @@ describe("label maps cover every enum value", () => {
     expectCompleteMap(GoalCategory, goalCategoryLabel);
     expectCompleteMap(GoalPriority, goalPriorityLabel);
     expectCompleteMap(GoalStatus, goalStatusLabel);
+  });
+
+  it("VideoType", () => {
+    expectCompleteMap(VideoType, videoTypeLabel);
+  });
+
+  it("VideoStatus", () => {
+    expectCompleteMap(VideoStatus, videoStatusLabel);
+    expectCompleteMap(VideoStatus, videoStatusTone);
+    expectCompleteMap(VideoStatus, videoStatusExplanation);
+  });
+
+  it("MatchResult / MatchStatus", () => {
+    expectCompleteMap(MatchResult, matchResultLabel);
+    expectCompleteMap(MatchResult, matchResultTone);
+    expectCompleteMap(MatchStatus, matchStatusLabel);
+  });
+
+  it("VideoJobType / VideoJobStatus", () => {
+    expectCompleteMap(VideoJobType, videoJobTypeLabel);
+    expectCompleteMap(VideoJobStatus, videoJobStatusLabel);
+    expectCompleteMap(VideoJobStatus, videoJobStatusTone);
+  });
+
+  it("EvidenceSource", () => {
+    expectCompleteMap(EvidenceSource, evidenceSourceLabel);
   });
 });

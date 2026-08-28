@@ -52,6 +52,7 @@ export async function createAssessmentAction(
       createdByUserId: user.id,
       evidence: {
         create: {
+          athleteId: athlete.id,
           evidenceType,
           description: evidenceDescription,
           createdByUserId: user.id,
@@ -90,6 +91,7 @@ export async function addEvidenceAction(
 
   await db.evidence.create({
     data: {
+      athleteId: athlete.id,
       skillAssessmentId: assessment.id,
       evidenceType: parsed.data.evidenceType,
       description: parsed.data.evidenceDescription,

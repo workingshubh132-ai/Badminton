@@ -48,3 +48,6 @@ next-env.d.ts
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# locally stored video files (dev-only local storage provider — never commit athlete video)
+/storage/

@@ -4,6 +4,8 @@ import { signOutAction } from "@/lib/actions/session";
 
 const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/matches", label: "Matches" },
+  { href: "/videos", label: "Videos" },
   { href: "/goals", label: "Goals" },
   { href: "/skills", label: "Skill Assessments" },
   { href: "/profile", label: "Profile" },

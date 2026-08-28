@@ -1,7 +1,9 @@
 // Badminton Performance Intelligence System — domain schema.
-// Scope: M1 (auth + athlete identity) and M2 (athlete performance model:
-// goals, skill catalog, skill assessments, evidence). See docs/DOMAIN_MODEL.md
-// for the full target schema and how later milestones extend this file.
+// Scope: M1 (auth + athlete identity), M2 (athlete performance model: goals,
+// skill catalog, skill assessments, evidence), and M4 (match/video upload
+// infrastructure: Video, Match, Rally/Event foundations, VideoJob, and a
+// generalized Evidence model). See docs/DOMAIN_MODEL.md for the full target
+// schema and docs/VIDEO_INTELLIGENCE.md for the video/CV pipeline design.
 
 generator client {
   provider = "prisma-client"
@@ -34,6 +36,8 @@ model User {
   athlete            Athlete?
   skillAssessments   SkillAssessment[] @relation("AssessmentAuthor")
   evidenceEntries    Evidence[]        @relation("EvidenceAuthor")
+  uploadedVideos     Video[]
+  createdMatches     Match[]
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +77,9 @@ model Athlete {
   profile           AthleteProfile?
   goals             Goal[]
   skillAssessments  SkillAssessment[]
+  videos            Video[]
+  matches           Match[]
+  evidence          Evidence[]
 }
 
 model AthleteProfile {
@@ -238,16 +245,344 @@ enum EvidenceType {
   STATISTIC
 }
 
+// Who/what produced this evidence entry. Only PLAYER is reachable from the UI
+// in M1/M2/M4 — COACH needs M14's coach-collaboration surface, and CV_SYSTEM/
+// AI_SYSTEM need M5+'s real CV pipeline. Present now so those milestones are
+// additive, not a breaking migration.
+enum EvidenceSource {
+  PLAYER
+  COACH
+  CV_SYSTEM
+  AI_SYSTEM
+}
+
+// Generalized evidence: introduced in M2 scoped only to SkillAssessment,
+// extended in M4 to also attach to a Match or a Video directly. See
+// docs/DOMAIN_MODEL.md "Generalized evidence model (M4)" for the full
+// reasoning — in short: exactly one of skillAssessmentId/matchId/videoId is
+// set per row (enforced by a CHECK constraint, see the M4 migration, plus
+// application-level validation in lib/actions/evidence.ts), rather than a
+// polymorphic (subjectType, subjectId) pair, so every relation keeps real
+// referential integrity. rallyId/eventId/hypothesisId are the documented
+// next extension points once M7/M9/M10 give them a real writer.
 model Evidence {
-  id                String          @id @default(cuid())
-  skillAssessmentId String
-  skillAssessment   SkillAssessment @relation(fields: [skillAssessmentId], references: [id], onDelete: Cascade)
+  id                String            @id @default(cuid())
+  athleteId         String
+  athlete           Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  skillAssessmentId String?
+  skillAssessment   SkillAssessment?  @relation(fields: [skillAssessmentId], references: [id], onDelete: Cascade)
+  matchId           String?
+  match             Match?            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  videoId           String?
+  video             Video?            @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
   evidenceType      EvidenceType
+  source            EvidenceSource    @default(PLAYER)
   description       String
+  // Confidence in the evidence itself (distinct from a SkillAssessment's own
+  // confidence) — mainly meaningful for CV/AI-sourced evidence. Null for a
+  // plain human note, where "confidence" isn't a meaningful concept.
+  confidence        ConfidenceLevel?
+  // Position within a video this evidence refers to, when applicable.
+  timestampSeconds  Float?
   observedAt        DateTime?
+  // Structured provenance for non-human evidence (e.g. { videoJobId,
+  // engineName }). No writer yet in M4 — reserved for M5's CV pipeline.
+  metadata          Json?
   createdByUserId   String
-  createdByUser     User            @relation("EvidenceAuthor", fields: [createdByUserId], references: [id])
-  createdAt         DateTime        @default(now())
+  createdByUser     User              @relation("EvidenceAuthor", fields: [createdByUserId], references: [id])
+  createdAt         DateTime          @default(now())
 
   @@index([skillAssessmentId])
+  @@index([matchId])
+  @@index([videoId])
+  @@index([athleteId])
+}
+
+// ---------------------------------------------------------------------------
+// M4: Match domain
+//
+// A Match is a container for videos and (eventually, M7+) rallies. Score is
+// deliberately free text, not structured MatchSet rows: the UI only ever
+// collects a human-typed score ("21-18, 21-15"), and a structured per-set
+// model only becomes real once CV/rally reconstruction actually populates
+// it. `status` stays UNPROCESSED until a real CV pipeline exists to advance
+// it — nothing in M4 sets it to anything else.
+// ---------------------------------------------------------------------------
+
+enum MatchResult {
+  WIN
+  LOSS
+  UNKNOWN
+}
+
+enum MatchStatus {
+  UNPROCESSED
+  PROCESSING
+  PARTIALLY_PROCESSED
+  PROCESSED
+}
+
+model Match {
+  id              String      @id @default(cuid())
+  athleteId       String
+  athlete         Athlete     @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  opponentName    String?
+  playedAt        DateTime
+  competitionName String?
+  format          String?
+  result          MatchResult @default(UNKNOWN)
+  score           String?
+  notes           String?
+  status          MatchStatus @default(UNPROCESSED)
+  createdByUserId String
+  createdByUser   User        @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  videos   Video[]
+  rallies  Rally[]
+  evidence Evidence[]
+
+  @@index([athleteId, playedAt])
+}
+
+// ---------------------------------------------------------------------------
+// M4: Video domain
+//
+// Every status transition is validated by lib/video/state-machine.ts, not
+// just the Prisma type system — see docs/VIDEO_INTELLIGENCE.md "Video
+// lifecycle" for the full transition table. Storage is private-only: the app
+// never returns a permanent public URL for a video, only short-lived signed
+// URLs via lib/video/access-token.ts (see lib/video/storage.ts).
+// ---------------------------------------------------------------------------
+
+enum VideoType {
+  MATCH
+  TRAINING
+  TECHNIQUE
+  OTHER
+}
+
+enum VideoStatus {
+  UPLOAD_PENDING
+  UPLOADING
+  UPLOADED
+  VALIDATING
+  VALID
+  INVALID
+  PROCESSING
+  READY_FOR_ANALYSIS
+  ANALYZING
+  ANALYZED
+  FAILED
+  DELETED
+}
+
+enum VideoOrientation {
+  LANDSCAPE
+  PORTRAIT
+  SQUARE
+}
+
+model Video {
+  id               String            @id @default(cuid())
+  athleteId        String
+  athlete          Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  matchId          String?
+  match            Match?            @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  videoType        VideoType
+  status           VideoStatus       @default(UPLOAD_PENDING)
+
+  originalFilename String
+  // Client-declared Content-Type — never trusted alone for validation.
+  clientMimeType   String?
+  // Server-verified via magic-byte sniffing during validation.
+  detectedFormat   String?
+  byteSize         BigInt?
+  checksumSha256   String?
+
+  // Only ever set when a real prober (ffprobe) actually derived them.
+  // Null means "not available," never a guessed/fabricated value.
+  durationSeconds  Float?
+  width            Int?
+  height           Int?
+  frameRate        Float?
+  orientation      VideoOrientation?
+
+  storageKey       String            @unique
+  invalidReason    String?
+  failureReason    String?
+
+  uploadedByUserId String
+  uploadedByUser   User              @relation(fields: [uploadedByUserId], references: [id])
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  jobs     VideoJob[]
+  events   Event[]
+  evidence Evidence[]
+
+  @@index([athleteId, status])
+  @@index([matchId])
+}
+
+// ---------------------------------------------------------------------------
+// M4: Rally / Event foundation
+//
+// Schema only — nothing in M4 writes a Rally or Event row. These exist so a
+// future CV engine (M5-M7) can populate them without a breaking migration,
+// per the spec's explicit instruction to build the domain representation
+// now. Do not build a UI to manually create these in M4: rally/shot
+// annotation is real product surface area that belongs to M7-M9, and an
+// empty table is the honest state until there's a real producer.
+// ---------------------------------------------------------------------------
+
+enum RallyWinner {
+  ATHLETE
+  OPPONENT
+  UNKNOWN
+}
+
+enum RallyStatus {
+  UNVERIFIED
+  CONFIRMED
+}
+
+enum RallySource {
+  MANUAL
+  CV_ANALYSIS
+}
+
+model Rally {
+  id                    String           @id @default(cuid())
+  matchId               String
+  match                 Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  setNumber             Int?
+  rallyNumber           Int
+  startTimestampSeconds Float?
+  endTimestampSeconds   Float?
+  durationSeconds       Float?
+  winner                RallyWinner      @default(UNKNOWN)
+  status                RallyStatus      @default(UNVERIFIED)
+  confidence            ConfidenceLevel?
+  source                RallySource
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  events Event[]
+
+  @@unique([matchId, rallyNumber])
+  @@index([matchId])
+}
+
+enum EventCategory {
+  MOVEMENT
+  SHOT
+  POSITION
+  CONTACT
+  COURT_EVENT
+  RALLY_EVENT
+  OTHER
+}
+
+enum ShotType {
+  SERVE
+  CLEAR
+  SMASH
+  DROP
+  SLICE
+  STICK_SMASH
+  NET
+  NET_KILL
+  LIFT
+  DRIVE
+  PUSH
+  BLOCK
+  DEFENCE
+  INTERCEPTION
+  OTHER
+}
+
+enum EventSource {
+  MANUAL
+  CV_ANALYSIS
+}
+
+model Event {
+  id               String          @id @default(cuid())
+  rallyId          String?
+  rally            Rally?          @relation(fields: [rallyId], references: [id], onDelete: Cascade)
+  videoId          String?
+  video            Video?          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  category         EventCategory
+  // Only meaningful when category = SHOT.
+  shotType         ShotType?
+  timestampSeconds Float
+  confidence       ConfidenceLevel
+  source           EventSource
+  // Normalized 0-1 court coordinates, only when derivable.
+  courtX           Float?
+  courtY           Float?
+  // Engine-specific structured detail (e.g. raw model output). Never
+  // rendered to the player as fact without the row's own confidence.
+  metadata         Json?
+  createdAt        DateTime        @default(now())
+
+  @@index([rallyId])
+  @@index([videoId, timestampSeconds])
+}
+
+// ---------------------------------------------------------------------------
+// M4: Video processing / analysis jobs
+//
+// Unifies the spec's "PROCESSING JOB" and "CV ANALYSIS JOB" stages into one
+// table with a `type` discriminator rather than two near-identical tables —
+// see docs/VIDEO_INTELLIGENCE.md "Job architecture" for the reasoning. Jobs
+// run inline via lib/video/job-runner.ts today (see that file's header
+// comment for why that's honest, not a fake queue), behind the same
+// `processVideoJob(jobId)` boundary a real background worker would call, so
+// swapping in a real queue later touches only how the job gets *invoked*.
+// ---------------------------------------------------------------------------
+
+enum VideoJobType {
+  PROCESSING
+  CV_ANALYSIS
+}
+
+enum VideoJobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  // The job correctly recognized it cannot do its work yet (e.g. no CV
+  // engine configured) — distinct from FAILED, which means something that
+  // should have worked did not. See spec's "insufficient evidence" ethos.
+  UNAVAILABLE
+}
+
+model VideoJob {
+  id              String         @id @default(cuid())
+  videoId         String
+  video           Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  type            VideoJobType
+  status          VideoJobStatus @default(PENDING)
+  progressPercent Int            @default(0)
+  // Which concrete implementation ran, e.g. "ffprobe-metadata-extractor",
+  // "null-cv-engine" — lets a future job list show what actually produced
+  // (or failed to produce) a result.
+  engineName      String?
+  engineVersion   String?
+  errorMessage    String?
+  attempt         Int            @default(1)
+  maxAttempts     Int            @default(3)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([videoId, type])
+  @@index([status])
 }
