@@ -1,6 +1,6 @@
 # Domain model
 
-## Currently implemented (M1 + M2 + M4)
+## Currently implemented (M1 + M2 + M4 + M5)
 
 Source of truth: `prisma/schema.prisma`. Summary:
 
@@ -17,6 +17,9 @@ Source of truth: `prisma/schema.prisma`. Summary:
 | `Video` | An uploaded video file | `MATCH`/`TRAINING`/`TECHNIQUE`/`OTHER`. Full status state machine — see `docs/VIDEO_INTELLIGENCE.md` "Video lifecycle." Metadata (duration/dimensions/frame rate) only ever populated from a real prober, never guessed. |
 | `VideoJob` | A processing or CV-analysis attempt for a video | See `docs/VIDEO_INTELLIGENCE.md` "Job architecture" for why this is one table with a `type` discriminator rather than two. |
 | `Rally`, `Event` | Schema-only foundation for M7-M9 | No code path writes either table yet — see `docs/VIDEO_INTELLIGENCE.md` "Match / Rally / Event foundation." |
+| `VideoQualityAssessment` | Real, measured recording-quality result for one CV analysis run | 1:1 with a `CV_ANALYSIS` `VideoJob` (`videoJobId` unique). `status` (`GOOD`/`ACCEPTABLE`/`POOR`/`UNUSABLE`) with specific `reasons`, never a bare score. See `docs/CV_ARCHITECTURE.md`. |
+| `CourtCalibration` | Court-boundary detection + video-px→court-metres homography for one run | 1:1 with a `CV_ANALYSIS` `VideoJob`. Confidence capped at `MODERATE` — see `docs/CV_ARCHITECTURE.md` "Court detection." |
+| `PlayerTrack` | A tracked person's trajectory for one run | Many per `VideoJob`. `identity` starts `UNKNOWN`/`HEURISTIC`; only a human confirmation (`confirmPlayerTrackIdentityAction`) sets `ATHLETE`/`OPPONENT`/`USER_CONFIRMED`. `detections`/`gaps` are JSON arrays on the row — see the storage-shape reasoning in `schema.prisma`'s M5 comment block. |
 
 ### Why `Athlete` and `AthleteProfile` are separate tables
 
@@ -75,6 +78,24 @@ real second/third consumers — `Match` and `Video` — so the extension happene
 fabricated functionality: adding a source value later (M5 CV pipeline, M14 coach collaboration)
 won't require a breaking migration or a data backfill.
 
+### CV result models (M5)
+
+`VideoQualityAssessment`, `CourtCalibration`, and `PlayerTrack` are keyed 1:1 (the first two) or
+many (`PlayerTrack`) to a `CV_ANALYSIS` `VideoJob` via `videoJobId`, not just to the `Video` — a
+video can be re-analyzed, and each run's rows stay distinct rather than being overwritten, so past
+runs remain inspectable. All three are structured Postgres rows, not object/blob storage — full
+storage-shape reasoning (including why `PlayerTrack.detections`/`.gaps` are JSON array columns on
+the row rather than a row-per-detection child table) lives in `schema.prisma`'s M5 comment block
+and `docs/CV_ARCHITECTURE.md` "Data contracts." `VideoJob.resultMetadata` (a new nullable JSON
+column) carries the parts of the CV service's `ProcessingMetadata` response that don't have fixed
+columns yet (model versions, sampling config, independently-computed video checksum) — see
+`docs/CV_ARCHITECTURE.md` "Provenance."
+
+`PlayerTrack.identity` deliberately starts `UNKNOWN`/`HEURISTIC` and is never heuristically guessed
+by the CV engine — see `docs/CV_ARCHITECTURE.md` "Player detection and tracking" for why, and for
+the human-confirmation write path (`identitySource: USER_CONFIRMED`,
+`identityConfirmedByUserId`/`identityConfirmedAt`) this milestone ships instead.
+
 ## Target schema (full spec section 32 domain, for later milestones)
 
 The spec's suggested table list, reasoned through rather than copied verbatim:
@@ -82,12 +103,17 @@ The spec's suggested table list, reasoned through rather than copied verbatim:
 **Already implemented:** `users`, `athletes`, `athlete_profiles`, `goals`, `skills`,
 `skill_assessments`, `evidence` (generalized in M4 — see above), `matches` (as `Match`), `videos`
 (as `Video`), `video_jobs` (as `VideoJob`, unified across the processing/analysis job types — see
-`docs/VIDEO_INTELLIGENCE.md`), plus schema-only `rallies`/events (as `Rally`/`Event`, no writer
-yet).
+`docs/VIDEO_INTELLIGENCE.md`), schema-only `rallies`/`events` (as `Rally`/`Event`, no writer yet),
+and, from M5, `court_calibrations` (as `CourtCalibration`), player tracking (as `PlayerTrack` — the
+spec's suggested `pose_data` shape isn't needed yet since M5 tracks bounding boxes, not skeletons —
+see below), and `VideoQualityAssessment` (not in the spec's suggested table list, added because a
+measured recording-quality result needed somewhere real to live — see `docs/CV_ARCHITECTURE.md`).
 
-**M5-M7 (CV pipeline, court/player detection, rally reconstruction):**
-- `court_calibrations` — per-video court coordinate mapping, with a confidence score.
-- `pose_data` — per-frame (or sampled) skeleton/joint data, referencing a video + timestamp.
+**M6-M7 (shot/pose detection, rally reconstruction — builds on M5's court calibration + player tracking):**
+- `pose_data` — per-frame (or sampled) skeleton/joint data. Not built in M5: M5's player detection
+  is bounding-box-only (no pose/keypoint model evaluated or installed yet — see
+  `docs/CV_ARCHITECTURE.md` "Model selection"). A real addition, not a rename, once a pose model is
+  selected.
 - Generic structured detections (shuttle position, racket position, classified shots and
   movement — spec's `cv_events`/`movement_events`/`shots`) reuse the `Event` model added in M4
   (`category`, `shotType`, `confidence`, `courtX`/`courtY`, `metadata`) rather than three more
@@ -98,6 +124,9 @@ yet).
   `Match.score` stays free text (see `docs/VIDEO_INTELLIGENCE.md` "Match / Rally / Event
   foundation") until this exists to populate it for real.
 - `players` — for opponent tracking within a match where the opponent isn't a registered `Athlete`.
+  M5's `PlayerTrack.identity` (`ATHLETE`/`OPPONENT`/`UNKNOWN`) is a per-video-run label, not a
+  standing opponent identity/profile — a real `players` table (name, notes, matches played against)
+  is still open, most relevant once M15 (opponent scouting) needs it.
 
 **M9 (decision engine):**
 - `decision_points` — a rally moment flagged as tactically significant (score situation, position,

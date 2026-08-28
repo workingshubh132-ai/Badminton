@@ -9,9 +9,9 @@ import type { ActionState } from "@/lib/actions/types";
 
 /** Loads a video the current athlete owns, or null. Never trusts a client-supplied athleteId. */
 async function requireOwnedVideo(videoId: string) {
-  const { athlete } = await requireAthlete();
+  const { user, athlete } = await requireAthlete();
   const video = await db.video.findFirst({ where: { id: videoId, athleteId: athlete.id } });
-  return { athlete, video };
+  return { user, athlete, video };
 }
 
 export async function deleteVideoAction(videoId: string): Promise<void> {
@@ -93,5 +93,49 @@ export async function associateVideoWithMatchAction(
   revalidatePath("/videos");
   revalidatePath(`/videos/${videoId}`);
   if (matchId) revalidatePath(`/matches/${matchId}`);
+  return { ok: true };
+}
+
+/**
+ * The CV engine never guesses ATHLETE/OPPONENT (see cv-service/app/tracking.py)
+ * — every PlayerTrack starts UNKNOWN. This is the one write path that can
+ * change that: a human explicitly confirming which detected track is them.
+ * It only ever labels an existing track; it never creates, edits, or
+ * fabricates any detection/trajectory data on it.
+ */
+export async function confirmPlayerTrackIdentityAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const videoId = String(formData.get("videoId") ?? "");
+  const trackId = String(formData.get("trackId") ?? "");
+  const identity = String(formData.get("identity") ?? "");
+  if (identity !== "ATHLETE" && identity !== "OPPONENT") {
+    return { ok: false, error: "Invalid identity." };
+  }
+
+  const { user, video } = await requireOwnedVideo(videoId);
+  if (!video || video.deletedAt) {
+    return { ok: false, error: "Video not found." };
+  }
+
+  // Scoped by videoId too, not just trackId, so one athlete can never
+  // confirm identity on a track that isn't theirs.
+  const track = await db.playerTrack.findFirst({ where: { id: trackId, videoId: video.id } });
+  if (!track) {
+    return { ok: false, error: "Player track not found." };
+  }
+
+  await db.playerTrack.update({
+    where: { id: track.id },
+    data: {
+      identity,
+      identitySource: "USER_CONFIRMED",
+      identityConfirmedByUserId: user.id,
+      identityConfirmedAt: new Date(),
+    },
+  });
+
+  revalidatePath(`/videos/${videoId}`);
   return { ok: true };
 }

@@ -7,6 +7,7 @@ import {
   requestReanalysisAction,
   deleteVideoAction,
   associateVideoWithMatchAction,
+  confirmPlayerTrackIdentityAction,
 } from "@/lib/actions/videos";
 import { INITIAL_ACTION_STATE } from "@/lib/actions/types";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,47 @@ export function AssociateMatchForm({
         Attach
       </SubmitButton>
     </form>
+  );
+}
+
+function ConfirmIdentityForm({
+  videoId,
+  trackId,
+  identity,
+  label,
+}: {
+  videoId: string;
+  trackId: string;
+  identity: "ATHLETE" | "OPPONENT";
+  label: string;
+}) {
+  const [state, formAction] = useActionState(confirmPlayerTrackIdentityAction, INITIAL_ACTION_STATE);
+  return (
+    <form action={formAction} className="inline-flex flex-col gap-1">
+      <input type="hidden" name="videoId" value={videoId} />
+      <input type="hidden" name="trackId" value={trackId} />
+      <input type="hidden" name="identity" value={identity} />
+      <FormError message={!state.ok ? state.error : undefined} />
+      <SubmitButton variant="secondary" pendingText="Saving…">
+        {label}
+      </SubmitButton>
+    </form>
+  );
+}
+
+/**
+ * Lets an athlete confirm which detected track is them — the CV engine
+ * itself never guesses this (see cv-service/app/tracking.py). Only shown
+ * for a track that isn't already USER_CONFIRMED; once confirmed, the plain
+ * identity badge on the page (not this component) takes over.
+ */
+export function ConfirmPlayerIdentityButtons({ videoId, trackId }: { videoId: string; trackId: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted">Who is this?</span>
+      <ConfirmIdentityForm videoId={videoId} trackId={trackId} identity="ATHLETE" label="This is me" />
+      <ConfirmIdentityForm videoId={videoId} trackId={trackId} identity="OPPONENT" label="Opponent" />
+    </div>
   );
 }
 

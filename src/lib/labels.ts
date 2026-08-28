@@ -1,5 +1,6 @@
 import type {
   AssessmentStatus,
+  CalibrationStatus,
   ConfidenceLevel,
   EvidenceSource,
   GoalCategory,
@@ -7,6 +8,8 @@ import type {
   GoalStatus,
   MatchResult,
   MatchStatus,
+  PlayerIdentity,
+  QualityStatus,
   SkillCategory,
   SkillLevel,
   Trend,
@@ -200,4 +203,43 @@ export const evidenceSourceLabel: Record<EvidenceSource, string> = {
   COACH: "Coach",
   CV_SYSTEM: "Computer vision",
   AI_SYSTEM: "AI analysis",
+};
+
+// M5: computer-vision quality/calibration/identity — copy stays literal
+// about what was (or wasn't) measured; never implies more certainty than
+// cv-service actually reported. See docs/CV_ARCHITECTURE.md.
+export const qualityStatusLabel: Record<QualityStatus, string> = {
+  GOOD: "Good",
+  ACCEPTABLE: "Acceptable",
+  POOR: "Poor",
+  UNUSABLE: "Unusable",
+};
+
+export const qualityStatusTone: Record<QualityStatus, "success" | "neutral" | "warning" | "danger"> = {
+  GOOD: "success",
+  ACCEPTABLE: "neutral",
+  POOR: "warning",
+  UNUSABLE: "danger",
+};
+
+export const calibrationStatusLabel: Record<CalibrationStatus, string> = {
+  NOT_ATTEMPTED: "Not attempted",
+  SUCCESS: "Court detected",
+  PARTIAL: "Partially detected",
+  FAILED: "Court not detected",
+  LOW_CONFIDENCE: "Detected — low confidence",
+};
+
+export const calibrationStatusTone: Record<CalibrationStatus, "success" | "neutral" | "warning" | "danger"> = {
+  NOT_ATTEMPTED: "neutral",
+  SUCCESS: "success",
+  PARTIAL: "warning",
+  FAILED: "danger",
+  LOW_CONFIDENCE: "warning",
+};
+
+export const playerIdentityLabel: Record<PlayerIdentity, string> = {
+  ATHLETE: "You",
+  OPPONENT: "Opponent",
+  UNKNOWN: "Not yet identified",
 };

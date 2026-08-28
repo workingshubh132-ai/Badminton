@@ -1,0 +1,11 @@
+-r requirements.txt
+
+# Test/eval tooling only — never imported by the running service.
+pytest==9.1.1
+httpx==0.28.1
+
+# scikit-image is used only to source a single legitimately-licensed
+# real photo (NASA public-domain "astronaut" image) for a person-detection
+# smoke test in eval/ — see docs/CV_ARCHITECTURE.md "Test fixtures and the
+# real-footage gap". Never used by the service itself.
+scikit-image==0.26.0

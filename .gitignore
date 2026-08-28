@@ -51,3 +51,10 @@ next-env.d.ts
 
 # locally stored video files (dev-only local storage provider — never commit athlete video)
 /storage/
+
+# cv-service (Python) — its own venv/caches, never the source, tests, or
+# the small committed synthetic fixtures/model file.
+/cv-service/.venv/
+/cv-service/**/__pycache__/
+/cv-service/.pytest_cache/
+*.pyc

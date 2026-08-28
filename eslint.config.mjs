@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // cv-service is a separate Python project (M5) with its own tooling —
+    // never lint it, and especially never its venv's vendored JS.
+    "cv-service/**",
   ]),
 ]);
 

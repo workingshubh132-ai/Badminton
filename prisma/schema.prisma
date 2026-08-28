@@ -33,11 +33,12 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  athlete            Athlete?
-  skillAssessments   SkillAssessment[] @relation("AssessmentAuthor")
-  evidenceEntries    Evidence[]        @relation("EvidenceAuthor")
-  uploadedVideos     Video[]
-  createdMatches     Match[]
+  athlete                        Athlete?
+  skillAssessments               SkillAssessment[] @relation("AssessmentAuthor")
+  evidenceEntries                Evidence[]        @relation("EvidenceAuthor")
+  uploadedVideos                 Video[]
+  createdMatches                 Match[]
+  confirmedPlayerTrackIdentities PlayerTrack[]     @relation("PlayerTrackIdentityConfirmedBy")
 }
 
 // ---------------------------------------------------------------------------
@@ -65,40 +66,40 @@ enum CompetitiveLevel {
 }
 
 model Athlete {
-  id            String    @id @default(cuid())
-  userId        String    @unique
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fullName      String
-  dateOfBirth   DateTime?
-  dominantHand  Hand?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  dateOfBirth  DateTime?
+  dominantHand Hand?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  profile           AthleteProfile?
-  goals             Goal[]
-  skillAssessments  SkillAssessment[]
-  videos            Video[]
-  matches           Match[]
-  evidence          Evidence[]
+  profile          AthleteProfile?
+  goals            Goal[]
+  skillAssessments SkillAssessment[]
+  videos           Video[]
+  matches          Match[]
+  evidence         Evidence[]
 }
 
 model AthleteProfile {
-  id                   String           @id @default(cuid())
-  athleteId            String           @unique
-  athlete              Athlete          @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  id                  String           @id @default(cuid())
+  athleteId           String           @unique
+  athlete             Athlete          @relation(fields: [athleteId], references: [id], onDelete: Cascade)
   // Self-reported, not a computed/verified ranking. Always render this
   // labeled as self-reported — see spec section 22 (no fake ranking claims).
-  currentLevel         CompetitiveLevel @default(INTERMEDIATE)
-  longTermGoal         String?
-  academyName          String?
-  coachName            String?
-  heightCm             Int?
-  weightKg             Float?
-  yearsPlaying         Int?
-  trainingDaysPerWeek  Int?
-  playingStyleNotes    String?
-  bio                  String?
-  updatedAt            DateTime         @updatedAt
+  currentLevel        CompetitiveLevel @default(INTERMEDIATE)
+  longTermGoal        String?
+  academyName         String?
+  coachName           String?
+  heightCm            Int?
+  weightKg            Float?
+  yearsPlaying        Int?
+  trainingDaysPerWeek Int?
+  playingStyleNotes   String?
+  bio                 String?
+  updatedAt           DateTime         @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -213,22 +214,22 @@ enum AssessmentSource {
 }
 
 model SkillAssessment {
-  id              String            @id @default(cuid())
+  id              String           @id @default(cuid())
   athleteId       String
-  athlete         Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  athlete         Athlete          @relation(fields: [athleteId], references: [id], onDelete: Cascade)
   skillId         String
-  skill           Skill             @relation(fields: [skillId], references: [id])
+  skill           Skill            @relation(fields: [skillId], references: [id])
   level           SkillLevel
   confidence      ConfidenceLevel
-  trend           Trend             @default(UNKNOWN)
-  status          AssessmentStatus  @default(PROVISIONAL)
-  source          AssessmentSource  @default(SELF_REPORT)
+  trend           Trend            @default(UNKNOWN)
+  status          AssessmentStatus @default(PROVISIONAL)
+  source          AssessmentSource @default(SELF_REPORT)
   summary         String
-  assessedAt      DateTime          @default(now())
+  assessedAt      DateTime         @default(now())
   createdByUserId String
-  createdByUser   User              @relation("AssessmentAuthor", fields: [createdByUserId], references: [id])
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  createdByUser   User             @relation("AssessmentAuthor", fields: [createdByUserId], references: [id])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   evidence Evidence[]
 
@@ -266,33 +267,33 @@ enum EvidenceSource {
 // referential integrity. rallyId/eventId/hypothesisId are the documented
 // next extension points once M7/M9/M10 give them a real writer.
 model Evidence {
-  id                String            @id @default(cuid())
-  athleteId         String
-  athlete           Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  athleteId String
+  athlete   Athlete @relation(fields: [athleteId], references: [id], onDelete: Cascade)
 
   skillAssessmentId String?
-  skillAssessment   SkillAssessment?  @relation(fields: [skillAssessmentId], references: [id], onDelete: Cascade)
+  skillAssessment   SkillAssessment? @relation(fields: [skillAssessmentId], references: [id], onDelete: Cascade)
   matchId           String?
-  match             Match?            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  match             Match?           @relation(fields: [matchId], references: [id], onDelete: Cascade)
   videoId           String?
-  video             Video?            @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  video             Video?           @relation(fields: [videoId], references: [id], onDelete: Cascade)
 
-  evidenceType      EvidenceType
-  source            EvidenceSource    @default(PLAYER)
-  description       String
+  evidenceType     EvidenceType
+  source           EvidenceSource   @default(PLAYER)
+  description      String
   // Confidence in the evidence itself (distinct from a SkillAssessment's own
   // confidence) — mainly meaningful for CV/AI-sourced evidence. Null for a
   // plain human note, where "confidence" isn't a meaningful concept.
-  confidence        ConfidenceLevel?
+  confidence       ConfidenceLevel?
   // Position within a video this evidence refers to, when applicable.
-  timestampSeconds  Float?
-  observedAt        DateTime?
+  timestampSeconds Float?
+  observedAt       DateTime?
   // Structured provenance for non-human evidence (e.g. { videoJobId,
   // engineName }). No writer yet in M4 — reserved for M5's CV pipeline.
-  metadata          Json?
-  createdByUserId   String
-  createdByUser     User              @relation("EvidenceAuthor", fields: [createdByUserId], references: [id])
-  createdAt         DateTime          @default(now())
+  metadata         Json?
+  createdByUserId  String
+  createdByUser    User             @relation("EvidenceAuthor", fields: [createdByUserId], references: [id])
+  createdAt        DateTime         @default(now())
 
   @@index([skillAssessmentId])
   @@index([matchId])
@@ -387,13 +388,13 @@ enum VideoOrientation {
 }
 
 model Video {
-  id               String            @id @default(cuid())
-  athleteId        String
-  athlete          Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
-  matchId          String?
-  match            Match?            @relation(fields: [matchId], references: [id], onDelete: SetNull)
-  videoType        VideoType
-  status           VideoStatus       @default(UPLOAD_PENDING)
+  id        String      @id @default(cuid())
+  athleteId String
+  athlete   Athlete     @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  matchId   String?
+  match     Match?      @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  videoType VideoType
+  status    VideoStatus @default(UPLOAD_PENDING)
 
   originalFilename String
   // Client-declared Content-Type — never trusted alone for validation.
@@ -405,25 +406,28 @@ model Video {
 
   // Only ever set when a real prober (ffprobe) actually derived them.
   // Null means "not available," never a guessed/fabricated value.
-  durationSeconds  Float?
-  width            Int?
-  height           Int?
-  frameRate        Float?
-  orientation      VideoOrientation?
+  durationSeconds Float?
+  width           Int?
+  height          Int?
+  frameRate       Float?
+  orientation     VideoOrientation?
 
-  storageKey       String            @unique
-  invalidReason    String?
-  failureReason    String?
+  storageKey    String  @unique
+  invalidReason String?
+  failureReason String?
 
   uploadedByUserId String
-  uploadedByUser   User              @relation(fields: [uploadedByUserId], references: [id])
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  uploadedByUser   User      @relation(fields: [uploadedByUserId], references: [id])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
 
-  jobs     VideoJob[]
-  events   Event[]
-  evidence Evidence[]
+  jobs               VideoJob[]
+  events             Event[]
+  evidence           Evidence[]
+  qualityAssessments VideoQualityAssessment[]
+  courtCalibrations  CourtCalibration[]
+  playerTracks       PlayerTrack[]
 
   @@index([athleteId, status])
   @@index([matchId])
@@ -583,6 +587,156 @@ model VideoJob {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
+  // Full ProcessingMetadata payload from a CV_ANALYSIS run (model_versions,
+  // sampling_fps, frames_sampled, config, independently-computed
+  // video_checksum_sha256, processing_seconds) — the spec's "provenance"
+  // requirement (engine version, model/version, config, processing job) is
+  // otherwise already covered by engineName/engineVersion/videoId above;
+  // this JSON blob holds the parts that don't have a fixed shape yet rather
+  // than forcing new typed columns for every field the CV service reports.
+  resultMetadata Json?
+
+  qualityAssessment VideoQualityAssessment?
+  courtCalibration  CourtCalibration?
+  playerTracks      PlayerTrack[]
+
   @@index([videoId, type])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// M5: Computer vision results — quality assessment, court calibration,
+// player tracking.
+//
+// One VideoQualityAssessment + one CourtCalibration per CV_ANALYSIS
+// VideoJob run (1:1 via videoJobId), and zero or more PlayerTrack rows per
+// run. Re-analyzing a video creates a new VideoJob and therefore a new set
+// of rows rather than overwriting the previous run — every past run stays
+// inspectable (debug mode, eval/evaluate.py-style comparisons). The video
+// detail page reads the most recent completed job's rows.
+//
+// Storage-shape decision (spec M5 "storage of CV results" — DB vs.
+// object/blob storage): PlayerTrack stores its full per-sample trajectory
+// (timestamp/x/y/bbox/confidence, court-x/y where available) and its
+// tracking gaps as JSON arrays on the track row itself, not as one child
+// row per detection. The only access pattern that exists or is planned is
+// "read one track's whole trajectory" (overlay rendering, gap review,
+// ground-truth evaluation) — never a SQL filter across individual points —
+// and at the M5 sampling rate (~2fps) even a long match keeps a track's
+// JSON payload to a few thousand small objects, well within Postgres
+// jsonb's limits. A row-per-detection table would add join cost for no
+// real query benefit at this scale. No raw video frames or images are ever
+// stored in Postgres — those stay in the existing VideoStorageProvider
+// (see lib/video/storage.ts); only structured, bounded CV output lives
+// here.
+// ---------------------------------------------------------------------------
+
+enum QualityStatus {
+  GOOD
+  ACCEPTABLE
+  POOR
+  UNUSABLE
+}
+
+model VideoQualityAssessment {
+  id                      String        @id @default(cuid())
+  videoId                 String
+  video                   Video         @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  videoJobId              String        @unique
+  videoJob                VideoJob      @relation(fields: [videoJobId], references: [id], onDelete: Cascade)
+  status                  QualityStatus
+  // Specific, human-readable reasons behind `status` — never an arbitrary
+  // numeric-only score. See cv-service/app/quality.py.
+  reasons                 String[]
+  // Measured by the CV service's own independent ffprobe pass — may differ
+  // slightly from Video.width/height/frameRate (Next.js's own probe at
+  // upload time). Null only when genuinely unmeasurable.
+  measuredWidth           Int?
+  measuredHeight          Int?
+  measuredFrameRate       Float?
+  measuredDurationSeconds Float?
+  framesSampled           Int
+  blankFrameRatio         Float?
+  decodeFailureRatio      Float?
+  createdAt               DateTime      @default(now())
+
+  @@index([videoId])
+}
+
+enum CalibrationStatus {
+  NOT_ATTEMPTED
+  SUCCESS
+  PARTIAL
+  FAILED
+  LOW_CONFIDENCE
+}
+
+model CourtCalibration {
+  id                    String            @id @default(cuid())
+  videoId               String
+  video                 Video             @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  videoJobId            String            @unique
+  videoJob              VideoJob          @relation(fields: [videoJobId], references: [id], onDelete: Cascade)
+  status                CalibrationStatus
+  // Deliberately capped at MODERATE by the CV engine today — see
+  // cv-service/app/court.py's module docstring for why HIGH/VERY_HIGH is
+  // never returned by classical, non-learned, non-manually-confirmed
+  // calibration.
+  confidence            ConfidenceLevel?
+  // [[x,y],[x,y],[x,y],[x,y]] in video pixel space, TL/TR/BR/BL order. Null
+  // when calibration did not succeed.
+  courtCornersPx        Json?
+  // 3x3 homography matrix (video px -> court metres), null when unavailable.
+  homography            Json?
+  // Sample timestamps (seconds) the calibration was computed from.
+  sourceFrameTimestamps Float[]
+  warnings              String[]
+  createdAt             DateTime          @default(now())
+
+  @@index([videoId])
+}
+
+enum PlayerIdentity {
+  ATHLETE
+  OPPONENT
+  UNKNOWN
+}
+
+model PlayerTrack {
+  id                        String          @id @default(cuid())
+  videoId                   String
+  video                     Video           @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  videoJobId                String
+  videoJob                  VideoJob        @relation(fields: [videoJobId], references: [id], onDelete: Cascade)
+  // The CV engine's own track id (a UUID it generates per run), unique only
+  // within one job's run (not globally) — kept alongside this row's own
+  // `id` so engine debug output can be cross-referenced back to a specific
+  // row.
+  engineTrackId             String
+  identity                  PlayerIdentity  @default(UNKNOWN)
+  // "HEURISTIC" (the engine never guesses ATHLETE/OPPONENT today — see
+  // cv-service/app/tracking.py) or "USER_CONFIRMED" once a human assigns
+  // identity through a future confirmation UI.
+  identitySource            String          @default("HEURISTIC")
+  identityConfirmedByUserId String?
+  identityConfirmedByUser   User?           @relation("PlayerTrackIdentityConfirmedBy", fields: [identityConfirmedByUserId], references: [id])
+  identityConfirmedAt       DateTime?
+  confidence                ConfidenceLevel
+  startTimestampSeconds     Float
+  endTimestampSeconds       Float
+  // Ordered array of {timestampSeconds, x, y, width, height, confidence,
+  // courtX?, courtY?} — bbox in NORMALIZED 0-1 image-space (resolution
+  // independent, matches cv-service's wire format), centre point is the
+  // tracked point; see docs/CV_ARCHITECTURE.md for that documented proxy
+  // limitation. courtX/courtY are real-world court metres, only populated
+  // when the run's court calibration produced a homography.
+  detections                Json
+  // Ordered array of {startTimestampSeconds, endTimestampSeconds, reason}
+  // — explicit tracking gaps, never silently bridged over. See
+  // cv-service/app/tracking.py.
+  gaps                      Json
+  createdAt                 DateTime        @default(now())
+
+  @@index([videoId])
+  @@index([videoJobId])
 }

@@ -1,14 +1,19 @@
-# Video intelligence (M4)
+# Video intelligence (M4 + M5)
 
-This document covers the match/video upload infrastructure built in M4: what exists, how it's
-wired together, and exactly where the boundary is between "real, working infrastructure" and
-"where a future computer-vision engine plugs in." See `docs/ARCHITECTURE.md` for the rest of the
+This document covers the match/video upload infrastructure built in M4 and the CV engine boundary
+it defines: what exists, how it's wired together, and where "real, working infrastructure" hands
+off to the actual computer-vision engine. M5 built a real implementation of that engine — see
+`docs/CV_ARCHITECTURE.md` for the CV-specific design (models, court calibration, tracking, data
+contracts, evaluation, limitations); this document stays focused on the upload/storage/job
+infrastructure and the interface boundary itself. See `docs/ARCHITECTURE.md` for the rest of the
 stack and `docs/DOMAIN_MODEL.md` for the full schema reasoning.
 
-**The one rule everything here follows:** nothing in this codebase fabricates a CV result. There
-is no computer-vision engine yet. Every screen that could show analysis says so honestly —
-"Analysis unavailable: no computer-vision analysis engine is configured yet" — rather than
-inventing a plausible-looking shot count or confidence score. See `lib/video/cv-engine.ts`.
+**The one rule everything here follows:** nothing in this codebase fabricates a CV result. Every
+screen that could show analysis says so honestly — a specific, measured quality/calibration/
+tracking result when `cv-service` is configured and ran, or "no computer-vision analysis engine is
+configured yet" when it isn't (still the default in any environment that hasn't set
+`CV_SERVICE_URL`, CI included) — never a plausible-looking fake number either way. See
+`lib/video/cv-engine.ts`.
 
 ## Video lifecycle
 
@@ -108,19 +113,26 @@ name/version, error message, attempt/maxAttempts, timestamps.
 **The local job runner (`lib/video/job-runner.ts`) is a documented stand-in for a real queue, not
 a fake one.** `runProcessingPipeline(videoId)` and `runAnalysisPipeline(videoId)` run inline, in
 the same request that triggered them — never behind an arbitrary `setTimeout`, and never
-fabricating a result while "pretending" to be async. That's honest today because every step is
-genuinely fast:
+fabricating a result while "pretending" to be async. That was fully honest through M4, when every
+step was genuinely fast:
 
 - magic-byte format sniffing reads ~64 bytes (`lib/video/magic-bytes.ts`)
 - ffprobe reads container headers, not the whole file (`lib/video/probe.ts`)
-- the only CV engine wired up (`NullCvEngine`) resolves instantly because it does no real work
+- `NullCvEngine` resolves instantly because it does no real work
 
-Nothing here blocks on actual video *decoding*. The moment a real step becomes slow — an actual CV
-pass, or frame-level quality checks — it moves behind a real queue, and the schema/interfaces
-already support that with zero changes: `VideoJob` rows are already queue-shaped, and every stage
-already goes through the exact function a background worker would call
-(`runProcessingPipeline(videoId)` / `runAnalysisPipeline(videoId)`). Swapping "call it inline" for
-"enqueue a message that calls it" is the entire migration — no schema change, no interface change.
+**M5's `PythonCvEngine` is the real step that changes this** — a real model pass over real video
+takes real time (measured: ~0.86s for a 5-second clip; see `docs/CV_ARCHITECTURE.md`
+"Performance" for why that doesn't scale linearly-and-safely to a full match yet). This is exactly
+the trigger condition this section already predicted. M5 adds a client-side request timeout
+(`PythonCvEngine`, default 10 minutes) so a slow or hung call fails honestly rather than hanging
+the request forever, but does **not** move analysis behind a real queue — that's a genuinely bigger
+architectural decision than this milestone should make unilaterally. The schema/interfaces already
+support that migration with zero changes when it happens: `VideoJob` rows are already
+queue-shaped, and every stage already goes through the exact function a background worker would
+call (`runProcessingPipeline(videoId)` / `runAnalysisPipeline(videoId)`). Swapping "call it inline"
+for "enqueue a message that calls it" is the entire migration — no schema change, no interface
+change. See `docs/CV_ARCHITECTURE.md` "Known limitations" and "Recommended M6" in the M5 final
+report for the full accounting of this gap.
 
 `runProcessingPipeline` auto-chains into `runAnalysisPipeline` once a video reaches
 `READY_FOR_ANALYSIS`, so the player sees the honest "no CV engine yet" result immediately rather
@@ -152,17 +164,29 @@ populate — degrading gracefully to "not available" if it's absent either way.
 ## CV engine interface
 
 `lib/video/cv-engine.ts` defines `CVAnalysisEngine` — the boundary a real computer-vision engine
-(M5+) plugs into. `analyze(input)` returns a `CVAnalysisResult` with a `status` of `"completed"`,
+plugs into. `analyze(input)` returns a `CVAnalysisResult` with a `status` of `"completed"`,
 `"unavailable"`, or `"failed"` — deliberately three states, not two, because "no engine exists yet"
 and "an engine exists and broke" are different situations that deserve different messaging (see
 `VideoJobStatus.UNAVAILABLE` vs. `FAILED` in the schema).
 
-`NullCvEngine` is the only implementation today. It performs no video processing at all — it
-honestly reports `status: "unavailable"` with an explanatory message. Every real pipeline stage
-around it (job creation, status transitions, event-writing on success) already works end-to-end
-against this engine; only the detection logic itself is unbuilt. Swapping in a real engine (M5+)
-means implementing `CVAnalysisEngine` and changing `getCvEngine()` — nothing else in the codebase
-needs to change.
+Two implementations exist:
+
+- **`NullCvEngine`** — performs no video processing at all; honestly reports
+  `status: "unavailable"` with an explanatory message. This is the pattern M4 shipped this
+  interface with, and every real pipeline stage around it (job creation, status transitions,
+  event-writing on success) already worked end-to-end against it before any real engine existed.
+- **`PythonCvEngine`** (M5, `lib/video/python-cv-engine.ts`) — calls `cv-service`, a separate
+  Python FastAPI service, over HTTP. Translates its wire-format JSON response field-for-field into
+  the same `CVAnalysisResult` shape (extended in M5 with `quality`/`courtCalibration`/
+  `playerTracks`/`processingMetadata`, all optional so `NullCvEngine`'s minimal shape stays valid)
+  — never reinterprets or guesses a value the service didn't send. See `docs/CV_ARCHITECTURE.md`
+  for the full CV design this implementation wraps.
+
+`getCvEngine()` picks between them based on whether `CV_SERVICE_URL` is configured — unset (the
+default for CI and any environment that hasn't started `cv-service`) means `NullCvEngine`, exactly
+the same honest fallback M4 shipped. Swapping engines, or adding a third implementation later,
+touches only `getCvEngine()` — nothing else in the codebase needs to change, proving out the
+interface boundary M4 designed this around.
 
 ## Evidence architecture
 
@@ -208,15 +232,20 @@ overbuilding the spec warns against).
 - **750 MB per-video ceiling** (`MAX_VIDEO_UPLOAD_BYTES`). A full 60-90 minute match at typical
   phone bitrates can exceed this. Chunked/resumable upload is a reasonable follow-up, not solved
   here — for now, recording in shorter segments (per rally/game) stays under the limit.
-- **No background queue yet** — see "Job architecture" above for why that's currently honest
-  rather than a corner cut, and exactly what the migration to a real queue looks like.
+- **No background queue yet, and M5 is the first stage where that actually matters** — see "Job
+  architecture" above for why this was honest through M4, what changed with a real CV engine, and
+  exactly what the migration to a real queue looks like.
 - **`ffprobe` is an optional host dependency**, not bundled. Metadata gracefully degrades to
   "not available" without it; a production deployment should ensure it's present for the feature
   to actually populate duration/dimensions.
-- **No camera-quality assessment** (full-court-visible, lighting, stability). The product spec is
-  explicit that these must never be guessed — they require real computer-vision analysis of the
-  frame content, which doesn't exist yet. Only genuinely-derivable technical metadata (resolution,
-  frame rate, duration) is recorded today.
+- **Camera-quality assessment now exists (M5)** — real, measured recording-quality analysis
+  (resolution/fps/blank-frame/decode-failure signals) via `cv-service`, replacing what used to be a
+  flat "not available." See `docs/CV_ARCHITECTURE.md` "Acceptance thresholds" for why those
+  thresholds are still provisional, not validated against real badminton footage yet.
 - **No chunked upload / resume-on-failure.** A dropped connection mid-upload currently means
   starting over; the partial file is cleaned up (`storage.upload` deletes on error) rather than
   left as a corrupt orphan, but there's no resume capability.
+
+CV-specific limitations (court detection accuracy, tracking, identity, single-host filesystem
+assumption, and more) are covered in full in `docs/CV_ARCHITECTURE.md` "Known limitations" rather
+than duplicated here.

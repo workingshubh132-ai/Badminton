@@ -1,0 +1,16 @@
+# Pinned to the exact versions verified working in this environment (Python
+# 3.11, CPU-only, no GPU). See docs/CV_ARCHITECTURE.md "Model selection" for
+# why each package was chosen.
+#
+# opencv-contrib-python is not listed explicitly: mediapipe depends on it
+# transitively and it is a superset of opencv-python's API (classical
+# court-detection code in this service uses only base cv2 functions —
+# Canny, HoughLinesP, findHomography — so opencv-python-headless alone would
+# also work, but pinning just mediapipe's own resolved dependency avoids two
+# OpenCV distributions fighting over the same cv2 namespace).
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.4
+mediapipe==1.0.1
+numpy==2.4.6

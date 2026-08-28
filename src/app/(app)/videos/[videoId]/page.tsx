@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { VideoEvidenceForm } from "./evidence-form";
+import { CvAnalysisSection } from "./cv-analysis";
 import {
   AssociateMatchForm,
   DeleteVideoButton,
@@ -74,6 +75,19 @@ export default async function VideoDetailPage({ params }: { params: Promise<{ vi
   const canPlay = PLAYABLE_STATUSES.has(video.status);
   const streamUrl = canPlay ? buildVideoStreamUrl(video.id) : null;
 
+  // The latest *succeeded* CV_ANALYSIS run only — never mixes rows from
+  // different analysis attempts, and never shows a run that failed or is
+  // still in progress as if it were a completed result.
+  const latestAnalysisJob =
+    video.jobs.find((job) => job.type === "CV_ANALYSIS" && job.status === "SUCCEEDED") ?? null;
+  const [cvQuality, cvCalibration, cvTracks] = latestAnalysisJob
+    ? await Promise.all([
+        db.videoQualityAssessment.findUnique({ where: { videoJobId: latestAnalysisJob.id } }),
+        db.courtCalibration.findUnique({ where: { videoJobId: latestAnalysisJob.id } }),
+        db.playerTrack.findMany({ where: { videoJobId: latestAnalysisJob.id }, orderBy: { createdAt: "asc" } }),
+      ])
+    : [null, null, []];
+
   const metadataRows = [
     ["Duration", formatDuration(video.durationSeconds)],
     ["Dimensions", video.width && video.height ? `${video.width} × ${video.height}` : null],
@@ -130,6 +144,14 @@ export default async function VideoDetailPage({ params }: { params: Promise<{ vi
           )}
         </div>
       </Card>
+
+      <CvAnalysisSection
+        videoId={video.id}
+        quality={cvQuality}
+        calibration={cvCalibration}
+        tracks={cvTracks}
+        job={latestAnalysisJob}
+      />
 
       {metadataRows.length > 0 && (
         <Card>

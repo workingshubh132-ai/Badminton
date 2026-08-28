@@ -35,6 +35,16 @@ export interface VideoStorageProvider {
   ): Promise<{ stream: Readable; totalBytes: number }>;
   exists(storageKey: string): Promise<boolean>;
   delete(storageKey: string): Promise<void>;
+  /**
+   * Absolute filesystem path for this key, if (and only if) this storage
+   * backend is a local filesystem the current process can read directly —
+   * used by anything that needs a real path rather than a stream (ffprobe,
+   * and the M5 CV service's single-host shared-filesystem assumption, see
+   * docs/CV_ARCHITECTURE.md "Deployment"). Returns null for a backend
+   * without a shared filesystem (e.g. a future S3 provider), so callers
+   * fail explicitly instead of assuming a path exists.
+   */
+  getLocalFilesystemPath(storageKey: string): string | null;
 }
 
 // Deliberately not overridable via env var: a dynamically-computed fs path
@@ -135,6 +145,10 @@ export class LocalFilesystemVideoStorageProvider implements VideoStorageProvider
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+  }
+
+  getLocalFilesystemPath(storageKey: string): string | null {
+    return this.resolvePath(storageKey);
   }
 }
 

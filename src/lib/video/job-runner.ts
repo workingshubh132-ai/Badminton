@@ -1,4 +1,3 @@
-import path from "node:path";
 import { db } from "@/lib/db";
 import { getVideoStorageProvider } from "@/lib/video/storage";
 import { detectContainerFormat } from "@/lib/video/magic-bytes";
@@ -6,7 +5,8 @@ import { probeVideoFile } from "@/lib/video/probe";
 import { getCvEngine } from "@/lib/video/cv-engine";
 import { setVideoStatus } from "@/lib/video/transition";
 import { MAX_PROCESSING_ATTEMPTS, MAX_VIDEO_UPLOAD_BYTES } from "@/lib/video/constants";
-import type { Prisma, Video } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
+import type { Video } from "@/generated/prisma/client";
 
 // ---------------------------------------------------------------------------
 // Local job runner — the documented stand-in for a real background worker.
@@ -162,16 +162,16 @@ function deriveOrientation(
   return width > height ? "LANDSCAPE" : "PORTRAIT";
 }
 
-// The local storage provider stores real filesystem paths; ffprobe needs a
-// path, not a stream, so this reaches past the storage interface for the
-// local implementation specifically. A future non-local storage provider
-// would instead download to a temp file before probing, or skip probing in
-// favor of a step in the (future) CV pipeline that already has the bytes.
+// ffprobe needs a real path, not a stream. VideoStorageProvider.getLocalFilesystemPath
+// exposes one when the backend is local disk; a future non-local storage
+// provider returning null here would mean downloading to a temp file before
+// probing instead (not implemented — no non-local provider exists yet).
 function resolveLocalPathForProbe(storageKey: string): string {
-  // Kept in sync with STORAGE_ROOT in lib/video/storage.ts (not imported
-  // from there — that constant is intentionally not exported to keep the
-  // storage module's file layout private to itself).
-  return path.join(process.cwd(), "storage", "videos", storageKey);
+  const localPath = getVideoStorageProvider().getLocalFilesystemPath(storageKey);
+  if (!localPath) {
+    throw new Error("This storage backend does not expose a local filesystem path for ffprobe.");
+  }
+  return localPath;
 }
 
 /**
@@ -203,32 +203,110 @@ export async function runAnalysisPipeline(videoId: string): Promise<void> {
   });
 
   if (result.status === "completed") {
-    if (result.events.length > 0) {
-      await db.event.createMany({
-        data: result.events.map((event) => ({
-          videoId: video.id,
-          source: "CV_ANALYSIS" as const,
-          category: event.category,
-          shotType: event.shotType,
-          timestampSeconds: event.timestampSeconds,
-          confidence: event.confidence,
-          courtX: event.courtX,
-          courtY: event.courtY,
-          metadata: event.metadata as Prisma.InputJsonValue | undefined,
-        })),
-      });
-    }
+    // Video status transitions first, matching the pre-existing ordering
+    // (see the FAILED/UNAVAILABLE branch below, unchanged): if this throws
+    // on an invalid transition, nothing else has been written yet. The CV
+    // result rows and the job's SUCCEEDED status are then written together
+    // as one atomic transaction below — either the whole result
+    // (quality/calibration/tracks/events/job status) lands together, or
+    // none of it does, so a mid-write crash never leaves a job marked
+    // SUCCEEDED without the rows that back it.
     await setVideoStatus(analyzing, "ANALYZED");
-    await db.videoJob.update({
-      where: { id: job.id },
-      data: {
-        status: "SUCCEEDED",
-        finishedAt: new Date(),
-        progressPercent: 100,
-        engineName: result.engineName,
-        engineVersion: result.engineVersion,
-      },
-    });
+
+    const writes: Prisma.PrismaPromise<unknown>[] = [];
+
+    if (result.events.length > 0) {
+      writes.push(
+        db.event.createMany({
+          data: result.events.map((event) => ({
+            videoId: video.id,
+            source: "CV_ANALYSIS" as const,
+            category: event.category,
+            shotType: event.shotType,
+            timestampSeconds: event.timestampSeconds,
+            confidence: event.confidence,
+            courtX: event.courtX,
+            courtY: event.courtY,
+            metadata: event.metadata as Prisma.InputJsonValue | undefined,
+          })),
+        }),
+      );
+    }
+
+    if (result.quality) {
+      writes.push(
+        db.videoQualityAssessment.create({
+          data: {
+            videoId: video.id,
+            videoJobId: job.id,
+            status: result.quality.status,
+            reasons: result.quality.reasons,
+            measuredWidth: result.quality.measuredWidth,
+            measuredHeight: result.quality.measuredHeight,
+            measuredFrameRate: result.quality.measuredFrameRate,
+            measuredDurationSeconds: result.quality.measuredDurationSeconds,
+            framesSampled: result.quality.framesSampled,
+            blankFrameRatio: result.quality.blankFrameRatio,
+            decodeFailureRatio: result.quality.decodeFailureRatio,
+          },
+        }),
+      );
+    }
+
+    if (result.courtCalibration) {
+      const calibration = result.courtCalibration;
+      writes.push(
+        db.courtCalibration.create({
+          data: {
+            videoId: video.id,
+            videoJobId: job.id,
+            status: calibration.status,
+            confidence: calibration.confidence,
+            courtCornersPx: jsonOrDbNull(calibration.courtCornersPx),
+            homography: jsonOrDbNull(calibration.homography),
+            sourceFrameTimestamps: calibration.sourceFrameTimestamps,
+            warnings: calibration.warnings,
+          },
+        }),
+      );
+    }
+
+    if (result.playerTracks && result.playerTracks.length > 0) {
+      writes.push(
+        db.playerTrack.createMany({
+          data: result.playerTracks.map((track) => ({
+            videoId: video.id,
+            videoJobId: job.id,
+            engineTrackId: track.engineTrackId,
+            identity: track.identity,
+            identitySource: track.identitySource,
+            confidence: track.confidence,
+            startTimestampSeconds: track.detections[0]?.timestampSeconds ?? 0,
+            endTimestampSeconds: track.detections[track.detections.length - 1]?.timestampSeconds ?? 0,
+            detections: track.detections as unknown as Prisma.InputJsonValue,
+            gaps: track.gaps as unknown as Prisma.InputJsonValue,
+          })),
+        }),
+      );
+    }
+
+    writes.push(
+      db.videoJob.update({
+        where: { id: job.id },
+        data: {
+          status: "SUCCEEDED",
+          finishedAt: new Date(),
+          progressPercent: 100,
+          engineName: result.engineName,
+          engineVersion: result.engineVersion,
+          resultMetadata: result.processingMetadata
+            ? (result.processingMetadata as unknown as Prisma.InputJsonValue)
+            : undefined,
+        },
+      }),
+    );
+
+    await db.$transaction(writes);
     return;
   }
 
@@ -244,4 +322,13 @@ export async function runAnalysisPipeline(videoId: string): Promise<void> {
       errorMessage: result.message,
     },
   });
+}
+
+// Prisma requires an explicit sentinel to write a real SQL NULL into a
+// nullable Json column — a plain JS `null` is ambiguous between "store the
+// JSON literal null" and "no value" (see Prisma.JsonNull vs Prisma.DbNull).
+// Court calibration data is either wholly present or wholly absent, so
+// Prisma.DbNull ("no value") is always the correct one here.
+function jsonOrDbNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  return value === null ? Prisma.DbNull : (value as Prisma.InputJsonValue);
 }

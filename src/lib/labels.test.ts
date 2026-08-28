@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AssessmentStatus,
+  CalibrationStatus,
   ConfidenceLevel,
   EvidenceSource,
   GoalCategory,
@@ -8,6 +9,8 @@ import {
   GoalStatus,
   MatchResult,
   MatchStatus,
+  PlayerIdentity,
+  QualityStatus,
   SkillCategory,
   SkillLevel,
   Trend,
@@ -18,6 +21,8 @@ import {
 } from "@/generated/prisma/client";
 import {
   assessmentStatusLabel,
+  calibrationStatusLabel,
+  calibrationStatusTone,
   confidenceLabel,
   confidenceTone,
   evidenceSourceLabel,
@@ -27,6 +32,9 @@ import {
   matchResultLabel,
   matchResultTone,
   matchStatusLabel,
+  playerIdentityLabel,
+  qualityStatusLabel,
+  qualityStatusTone,
   skillCategoryLabel,
   skillLevelLabel,
   trendLabel,
@@ -103,5 +111,19 @@ describe("label maps cover every enum value", () => {
 
   it("EvidenceSource", () => {
     expectCompleteMap(EvidenceSource, evidenceSourceLabel);
+  });
+
+  it("QualityStatus", () => {
+    expectCompleteMap(QualityStatus, qualityStatusLabel);
+    expectCompleteMap(QualityStatus, qualityStatusTone);
+  });
+
+  it("CalibrationStatus", () => {
+    expectCompleteMap(CalibrationStatus, calibrationStatusLabel);
+    expectCompleteMap(CalibrationStatus, calibrationStatusTone);
+  });
+
+  it("PlayerIdentity", () => {
+    expectCompleteMap(PlayerIdentity, playerIdentityLabel);
   });
 });

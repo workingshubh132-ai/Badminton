@@ -30,6 +30,28 @@ that actually revokes stream access. Dashboard now shows real match/video counts
 `docs/VIDEO_INTELLIGENCE.md` for the full design and `e2e/video-pipeline.spec.ts` for the
 end-to-end security/pipeline test coverage.
 
+**M5 — Computer vision foundation: court calibration + player detection/tracking + ground-truth evaluation.**
+Replaced `NullCvEngine` with `PythonCvEngine`, calling a new separate Python service (`cv-service/`,
+FastAPI) over HTTP — see `docs/CV_ARCHITECTURE.md` for the full design. Real video preprocessing
+(ffprobe-based, streamed frame sampling, never loads a whole video into memory); recording-quality
+assessment with specific reasons, never a bare score; classical (non-learned, explicitly
+explainable) court boundary detection and video-px→court-metres homography calibration, confidence
+deliberately capped at `MODERATE`; real person detection (MediaPipe + EfficientDet-Lite0,
+Apache 2.0, CPU-only) with a documented "never assume the largest human is the athlete" identity
+model — every track starts `UNKNOWN` and only a human "This is me"/"Opponent" confirmation
+(`confirmPlayerTrackIdentityAction`) changes that; classical IoU-based tracking with explicit,
+never-silently-bridged tracking gaps; three new Postgres models
+(`VideoQualityAssessment`/`CourtCalibration`/`PlayerTrack`) with full provenance back to the
+`VideoJob` that produced them; a ground-truth evaluation framework (`cv-service/eval/`) separate
+from the pytest suite, with a synthetic (clearly-labeled, non-photorealistic) fixture proving the
+calibration geometry is correct (mean corner error 2.99 px, IoU 0.988 against ground truth); the
+video detail page now shows real quality/calibration/tracking status, a basic SVG overlay of the
+actual detected court and trajectories, and a collapsed developer/debug panel. **Honestly flagged,
+not solved:** real-badminton-footage accuracy is unvalidated — only synthetic-fixture geometry has
+been proven correct; see `docs/CV_ARCHITECTURE.md` "Test fixtures and the real-footage gap" and
+"Known limitations" for the full account, including the inline-request CV-invocation limitation
+inherited from M4's job-runner design.
+
 ## Not started
 
 **M3 — AI Coach + persistent structured athlete memory.**
@@ -40,16 +62,14 @@ analysis results, since M5+ doesn't exist yet), realistically this reads goals +
 self-reported data, not an independent diagnosis. Should NOT be built as a chatbot with its own
 memory — spec section 31 requires structured output written back to the athlete model.
 
-**M5 — Video processing pipeline + court/player detection.**
-The real CV engine — separate Python service (see `ARCHITECTURE.md` "CV pipeline"), implementing
-`lib/video/cv-engine.ts`'s `CVAnalysisEngine` interface in place of `NullCvEngine`. This is a
-genuinely large, separate engineering effort — likely its own repo/deployment target, not a
-Next.js API route. M4 already built everything around this boundary (upload, storage, job
-tracking, status transitions) — M5 is specifically the detection logic itself.
-
-**M6 — Basic CV event detection.**
-Depends on M5. Every detection carries a confidence score; below-threshold detections are surfaced
-as "insufficient visual evidence," never silently dropped or guessed (spec section 7).
+**M6 — Basic CV event detection (shuttle/racket tracking, shot classification).**
+Builds on M5's real court calibration and player tracking — see `docs/CV_ARCHITECTURE.md` "Future
+CV roadmap" for the recommended order: first, a small hand-labeled real-footage evaluation set to
+finally validate (or correct) M5's provisional acceptance thresholds and confirm the pipeline works
+on actual badminton video, not just synthetic geometry; then shuttle/racket tracking and shot
+classification, writing to the `Event` model M4 already shaped for this. Every detection carries a
+confidence score; below-threshold detections are surfaced as "insufficient visual evidence," never
+silently dropped or guessed (spec section 7).
 
 **M7 — Rally reconstruction.** Depends on M5/M6.
 
@@ -95,18 +115,23 @@ taxonomy from M9 exists, so situations can be scored consistently.
 `DOMAIN_MODEL.md`).
 
 **M20 — Production hardening + observability + security + performance.**
-Notable gaps already known from M1/M2/M4 that belong here: no rate limiting on signup/login/upload,
-no audit log (spec section 33 requires one), no deployment target configured (local Postgres +
-local disk video storage only), no real background job queue yet (see
+Notable gaps already known from M1/M2/M4/M5 that belong here: no rate limiting on
+signup/login/upload, no audit log (spec section 33 requires one), no deployment target configured
+(local Postgres + local disk video storage only), no real background job queue yet (see
 `docs/VIDEO_INTELLIGENCE.md` "Job architecture" for why that's currently honest rather than a
-corner cut), 750 MB per-video upload ceiling with no chunked/resumable upload, `ffmpeg`/`ffprobe`
-is a host dependency not bundled with the app. An automated test suite now exists (Vitest unit
-tests + a Playwright e2e suite — see `README.md` "Testing") but has no CI wiring yet.
+corner cut — M5's CV analysis call now genuinely needs this, not just processing/metadata
+extraction, since real model inference is no longer instant), 750 MB per-video upload ceiling with
+no chunked/resumable upload, `ffmpeg`/`ffprobe` is a host dependency not bundled with the app,
+`cv-service` assumes a shared filesystem with the Next.js app (see `docs/CV_ARCHITECTURE.md`
+"Deployment" — a real constraint for a future multi-host deployment). An automated test suite now
+exists (Vitest unit tests, a Playwright e2e suite, and cv-service's own pytest + ground-truth eval
+suite — see `README.md` "Testing") but has no CI wiring yet.
 
 ## Sequencing note
 
-M3 (AI Coach) is listed next in the master spec's suggested order, but M5-M10 (the real CV engine
+M3 (AI Coach) is listed next in the master spec's suggested order, but M6-M10 (shot/event detection
 through the bottleneck engine) are the ones that give the AI Coach and the dashboard something new
-to reason over beyond what M2 already provided (M4 added match/video *records*, not analysis
-results). Either order is defensible; this file doesn't prescribe which to build next — that's a
-product call for the next session, not an architecture call.
+to reason over beyond what M2 already provided (M4 added match/video *records*; M5 added real but
+still shot/rally-blind court+player tracking — not yet "what happened in this rally" analysis).
+Either order is defensible; this file doesn't prescribe which to build next — that's a product call
+for the next session, not an architecture call.
