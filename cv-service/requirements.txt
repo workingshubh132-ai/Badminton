@@ -14,3 +14,5 @@ python-multipart==0.0.32
 pydantic==2.13.4
 mediapipe==1.0.1
 numpy==2.4.6
+flask==3.1.0
+opencv-python==4.10.1.26
