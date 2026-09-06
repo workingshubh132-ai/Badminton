@@ -1,0 +1,31 @@
+{
+  "videos": {
+    "synthetic_court_01_smoke_test": {
+      "video_id": "synthetic_court_01_smoke_test",
+      "filename": "synthetic_court_01.mp4",
+      "license": "reference",
+      "source_description": "M5.5 smoke test - synthetic fixture (non-photorealistic court)",
+      "camera_description": "synthetic",
+      "width": 1280,
+      "height": 720,
+      "fps": 24.0,
+      "duration_seconds": 5.0,
+      "codec": "h264",
+      "ingested_at": "2026-09-06T06:44:33.197631"
+    }
+  },
+  "clips": {
+    "clip_synthetic_court_01_0-5": {
+      "clip_id": "clip_synthetic_court_01_0-5",
+      "source_video_id": "synthetic_court_01_smoke_test",
+      "start_seconds": 0.0,
+      "end_seconds": 5.0,
+      "camera_view": "synthetic",
+      "court_visible": true,
+      "players_visible": 0,
+      "annotation_status": "pending",
+      "created_at": "2026-09-06T06:44:39.976402",
+      "notes": "Synthetic fixture - no real players"
+    }
+  }
+}
