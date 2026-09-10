@@ -58,3 +58,12 @@ next-env.d.ts
 /cv-service/**/__pycache__/
 /cv-service/.pytest_cache/
 *.pyc
+
+# dataset_v1 — third-party source footage and any stills derived from it are never
+# committed. Derived frames/contact sheets are still copies of the footage, so they
+# stay local too. Only measured facts (sources.json, metadata/, analysis/) and the
+# reports are tracked.
+/dataset_v1/incoming/*
+!/dataset_v1/incoming/README.md
+/dataset_v1/frames/
+/dataset_v1/contact_sheets/

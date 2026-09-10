@@ -59,6 +59,13 @@ Commands:
     Options:
       --dataset-dir PATH              Dataset root
 
+  dataset-v1
+    Acquire candidate footage, measure it, build contact sheets, classify it,
+    and regenerate DATASET_V1_SELECTION_REPORT.md + MANUAL_DOWNLOAD_REQUIRED.md
+    Options:
+      --dataset-dir PATH              Dataset root (default: repo_root/dataset_v1)
+      --skip-acquire                  Only inspect files already in incoming/
+
   overlay CLIP_ID
     Generate visual overlay video/images
     Options:
@@ -153,6 +160,20 @@ Examples:
                 print(f"  ... and {len(unevaluated) - 5} more")
 
         print(f"{'=' * 70}\n")
+
+    elif command == "dataset-v1":
+        from .dataset_v1 import run as dataset_v1_run
+        import argparse
+
+        parser = argparse.ArgumentParser(description="Acquire and triage dataset v1 footage.")
+        parser.add_argument("--dataset-dir", default=None)
+        parser.add_argument(
+            "--skip-acquire",
+            action="store_true",
+            help="Only inspect files already in dataset_v1/incoming/",
+        )
+        args = parser.parse_args(sys.argv[2:])
+        dataset_v1_run(args.dataset_dir, skip_acquire=args.skip_acquire)
 
     elif command == "overlay":
         from .overlay import generate_overlay_image

@@ -2,12 +2,9 @@
 # 3.11, CPU-only, no GPU). See docs/CV_ARCHITECTURE.md "Model selection" for
 # why each package was chosen.
 #
-# opencv-contrib-python is not listed explicitly: mediapipe depends on it
-# transitively and it is a superset of opencv-python's API (classical
-# court-detection code in this service uses only base cv2 functions —
-# Canny, HoughLinesP, findHomography — so opencv-python-headless alone would
-# also work, but pinning just mediapipe's own resolved dependency avoids two
-# OpenCV distributions fighting over the same cv2 namespace).
+# opencv-contrib-python is mediapipe's own transitive OpenCV distribution and a
+# superset of opencv-python's API. It is pinned explicitly (see below) so that the
+# version is reproducible and only one distribution owns the cv2 namespace.
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 python-multipart==0.0.32
@@ -15,4 +12,10 @@ pydantic==2.13.4
 mediapipe==1.0.1
 numpy==2.4.6
 flask==3.1.0
-opencv-python==4.10.1.26
+# Pin mediapipe's own OpenCV distribution rather than adding opencv-python next to
+# it, so only one package owns the cv2 namespace. mediapipe declares
+# opencv-contrib-python with no upper bound, so an unpinned install resolves to
+# OpenCV 5 -- which removed the legacy objdetect detectors (cv2.HOGDescriptor) that
+# eval/dataset_v1 uses as a triage person detector deliberately independent of the
+# M5 detector it selects footage for. Must stay on the 4.x line.
+opencv-contrib-python==4.10.0.84

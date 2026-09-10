@@ -1,0 +1,80 @@
+{
+  "schema": "dataset_v1.sources/1",
+  "license_status_vocabulary": [
+    "PERMITTED",
+    "REFERENCE_ONLY",
+    "LICENSE_REVIEW_REQUIRED"
+  ],
+  "sources": [
+    {
+      "source_id": "pexels_35087073",
+      "source_url": "https://www.pexels.com/video/boys-playing-badminton-on-indoor-court-35087073/",
+      "provider": "Pexels",
+      "license_terms_url": "https://www.pexels.com/license/",
+      "license_status": "LICENSE_REVIEW_REQUIRED",
+      "license_verified": false,
+      "page_title_as_published": "Boys Playing Badminton on Indoor Court",
+      "expected_filename": "pexels_35087073.mp4",
+      "notes": "Licence text was NOT retrievable from this environment; status stays LICENSE_REVIEW_REQUIRED until a human reads the terms URL.",
+      "automated_download_possible": false,
+      "automated_download_blocked_reason": "EGRESS_POLICY_DENIED: proxy refused CONNECT tunnel: Tunnel connection failed: 403 Forbidden",
+      "downloaded_filename": ""
+    },
+    {
+      "source_id": "pexels_8052834",
+      "source_url": "https://www.pexels.com/video/badminton-player-playing-indoors-8052834/",
+      "provider": "Pexels",
+      "license_terms_url": "https://www.pexels.com/license/",
+      "license_status": "LICENSE_REVIEW_REQUIRED",
+      "license_verified": false,
+      "page_title_as_published": "Badminton Player Playing Indoors",
+      "expected_filename": "pexels_8052834.mp4",
+      "notes": "Licence text was NOT retrievable from this environment; status stays LICENSE_REVIEW_REQUIRED until a human reads the terms URL.",
+      "automated_download_possible": false,
+      "automated_download_blocked_reason": "EGRESS_POLICY_DENIED: proxy refused CONNECT tunnel: Tunnel connection failed: 403 Forbidden",
+      "downloaded_filename": ""
+    },
+    {
+      "source_id": "pexels_8053646",
+      "source_url": "https://www.pexels.com/video/people-playing-badminton-8053646/",
+      "provider": "Pexels",
+      "license_terms_url": "https://www.pexels.com/license/",
+      "license_status": "LICENSE_REVIEW_REQUIRED",
+      "license_verified": false,
+      "page_title_as_published": "People Playing Badminton",
+      "expected_filename": "pexels_8053646.mp4",
+      "notes": "Licence text was NOT retrievable from this environment; status stays LICENSE_REVIEW_REQUIRED until a human reads the terms URL.",
+      "automated_download_possible": false,
+      "automated_download_blocked_reason": "EGRESS_POLICY_DENIED: proxy refused CONNECT tunnel: Tunnel connection failed: 403 Forbidden",
+      "downloaded_filename": ""
+    },
+    {
+      "source_id": "pexels_8053653",
+      "source_url": "https://www.pexels.com/video/teammates-playing-badminton-8053653/",
+      "provider": "Pexels",
+      "license_terms_url": "https://www.pexels.com/license/",
+      "license_status": "LICENSE_REVIEW_REQUIRED",
+      "license_verified": false,
+      "page_title_as_published": "Teammates Playing Badminton",
+      "expected_filename": "pexels_8053653.mp4",
+      "notes": "Licence text was NOT retrievable from this environment; status stays LICENSE_REVIEW_REQUIRED until a human reads the terms URL.",
+      "automated_download_possible": false,
+      "automated_download_blocked_reason": "EGRESS_POLICY_DENIED: proxy refused CONNECT tunnel: Tunnel connection failed: 403 Forbidden",
+      "downloaded_filename": ""
+    },
+    {
+      "source_id": "pexels_35087074",
+      "source_url": "https://www.pexels.com/video/dynamic-indoor-badminton-match-with-youths-35087074/",
+      "provider": "Pexels",
+      "license_terms_url": "https://www.pexels.com/license/",
+      "license_status": "LICENSE_REVIEW_REQUIRED",
+      "license_verified": false,
+      "page_title_as_published": "Dynamic Indoor Badminton Match with Youths",
+      "expected_filename": "pexels_35087074.mp4",
+      "notes": "Licence text was NOT retrievable from this environment; status stays LICENSE_REVIEW_REQUIRED until a human reads the terms URL.",
+      "automated_download_possible": false,
+      "automated_download_blocked_reason": "EGRESS_POLICY_DENIED: proxy refused CONNECT tunnel: Tunnel connection failed: 403 Forbidden",
+      "downloaded_filename": ""
+    }
+  ]
+}
