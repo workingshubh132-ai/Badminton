@@ -67,3 +67,8 @@ next-env.d.ts
 !/dataset_v1/incoming/README.md
 /dataset_v1/frames/
 /dataset_v1/contact_sheets/
+
+# Same rule if footage is staged inside the eval package instead of the repo-root
+# dataset_v1/ tree: raw video is never committed from either location.
+/cv-service/eval/dataset_v1/incoming/
+/dataset_v1/quarantine_license_review/

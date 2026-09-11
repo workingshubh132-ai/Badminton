@@ -165,6 +165,13 @@ def render_selection_report(root: Path, sources: list[Source], analyses: dict[st
         "head-and-torso portrait, off-distribution for a full-body pedestrian detector, so it "
         "understates real performance and is not a calibrated floor.",
         "",
+        "It over-counts too, and that has now been observed on real footage. On broadcast "
+        "badminton clips inspected for `GITHUB_DATASET_ACQUISITION_REPORT.md` it reported a "
+        "median of 4.5-7 people per frame and labelled every clip \"doubles\"; the annotated "
+        "contact sheets showed it boxing seated line judges and crowd in the stands. All of "
+        "those clips were singles. Treat `likely_format` as unreliable wherever spectators or "
+        "officials are visible.",
+        "",
         "The honest position: **the person detector is not calibrated against real players**, "
         "because no footage containing people was reachable from this environment. Person counts "
         "should be read as a lower bound, never as truth. That is exactly why zero detections "
@@ -340,6 +347,12 @@ def render_selection_report(root: Path, sources: list[Source], analyses: dict[st
             "environment's egress allowlist extended to the provider hosts "
             "(`www.pexels.com`, `videos.pexels.com`), then re-run `python -m eval dataset-v1`. "
             "The acquisition path is implemented and will fetch the files unattended.",
+            "",
+            "A GitHub-hosted route was also investigated and rejected on licensing, not "
+            "reachability -- see `GITHUB_DATASET_ACQUISITION_REPORT.md`. Public research "
+            "repositories did yield real badminton video, but frame inspection showed all of "
+            "it to be BWF World Tour and Olympic broadcast footage with no licence covering "
+            "the video, so none of it entered the dataset.",
             "",
             "Switching provider will not help from this sandbox. At the time this report was "
             "generated, `archive.org`, `commons.wikimedia.org`, `upload.wikimedia.org`, "

@@ -1,6 +1,6 @@
 # Dataset v1 Selection Report
 
-_Generated 2026-09-10T17:15:30+00:00_
+_Generated 2026-09-11T17:12:31+00:00_
 
 Scope: acquire real badminton footage and triage it for the M5.5 validation gate. No M5 evaluation is run here, and no real-world accuracy claim is made.
 
@@ -11,6 +11,8 @@ Scope: acquire real badminton footage and triage it for the M5.5 validation gate
 The acquisition and inspection pipeline has been run end to end against `cv-service/eval/fixtures/synthetic_court_01.mp4` to confirm it works before anyone spends effort downloading: ffprobe metadata, SHA-256, frame decoding, all measurements, both contact sheets, per-file JSON and this report were produced. That is a **tooling self-test only**; it validates nothing about M5's real-world accuracy and the fixture is not part of the candidate set.
 
 **Known weakness — read this before trusting any person count.** The triage person detector was probed against the public-domain NASA astronaut photo that ships with scikit-image. Single-scale HOG fired at 1.0x and 2.0x input scale but found nothing at 1.5x, so it is sharply scale-brittle; the detector now sweeps several scales and merges with non-max suppression, which closed that blind spot. Detection still fell off sharply once the figure dropped below roughly 80% of frame height — though that sample is a head-and-torso portrait, off-distribution for a full-body pedestrian detector, so it understates real performance and is not a calibrated floor.
+
+It over-counts too, and that has now been observed on real footage. On broadcast badminton clips inspected for `GITHUB_DATASET_ACQUISITION_REPORT.md` it reported a median of 4.5-7 people per frame and labelled every clip "doubles"; the annotated contact sheets showed it boxing seated line judges and crowd in the stands. All of those clips were singles. Treat `likely_format` as unreliable wherever spectators or officials are visible.
 
 The honest position: **the person detector is not calibrated against real players**, because no footage containing people was reachable from this environment. Person counts should be read as a lower bound, never as truth. That is exactly why zero detections cannot produce a REJECT — only hard technical facts (resolution, duration, no continuous segment) can. On the first real run, compare the `_annotated` contact sheet against the raw one and correct the verdicts by eye.
 
@@ -76,6 +78,8 @@ Source media, extracted frames and contact sheets are git-ignored. Only measured
 4. Review the contact sheets and confirm or overrule each MANUAL_REVIEW verdict.
 
 Alternative to step 1, if you would rather not download by hand: have the environment's egress allowlist extended to the provider hosts (`www.pexels.com`, `videos.pexels.com`), then re-run `python -m eval dataset-v1`. The acquisition path is implemented and will fetch the files unattended.
+
+A GitHub-hosted route was also investigated and rejected on licensing, not reachability -- see `GITHUB_DATASET_ACQUISITION_REPORT.md`. Public research repositories did yield real badminton video, but frame inspection showed all of it to be BWF World Tour and Olympic broadcast footage with no licence covering the video, so none of it entered the dataset.
 
 Switching provider will not help from this sandbox. At the time this report was generated, `archive.org`, `commons.wikimedia.org`, `upload.wikimedia.org`, `openverse.org`, `pixabay.com` and `www.youtube.com` were each probed and each returned the same 403 CONNECT denial. The allowlist here covers package registries and source control, not media hosts, so either the allowlist changes or a human downloads the files.
 
