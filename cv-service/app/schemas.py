@@ -15,6 +15,11 @@ ConfidenceLevel = Literal["VERY_LOW", "LOW", "MODERATE", "HIGH", "VERY_HIGH"]
 QualityStatus = Literal["GOOD", "ACCEPTABLE", "POOR", "UNUSABLE"]
 CalibrationStatus = Literal["NOT_ATTEMPTED", "SUCCESS", "PARTIAL", "FAILED", "LOW_CONFIDENCE"]
 PlayerIdentity = Literal["ATHLETE", "OPPONENT", "UNKNOWN"]
+# Whether a tracked person is playing on court, as opposed to a spectator,
+# line judge, coach or passer-by. Orthogonal to PlayerIdentity: participation
+# is inferred from court geometry, identity is confirmed by a human.
+ParticipantStatus = Literal["PARTICIPANT", "NON_PARTICIPANT", "UNKNOWN"]
+MatchFormat = Literal["SINGLES", "DOUBLES", "UNKNOWN"]
 EngineStatus = Literal["completed", "failed", "unavailable"]
 
 
@@ -62,6 +67,47 @@ class TrackingGap(BaseModel):
     reason: str
 
 
+class ParticipantEvidence(BaseModel):
+    """Why a track was, or was not, judged a court participant.
+
+    Every field is a measurement, so a reviewer can disagree with the verdict
+    on the evidence rather than having to trust it.
+    """
+
+    status: ParticipantStatus
+    confidence: ConfidenceLevel
+    # Human-readable justification. Always populated, including for UNKNOWN.
+    reasons: list[str] = Field(default_factory=list)
+    # COURT_GEOMETRY when a homography was available; NO_CALIBRATION when it
+    # was not, in which case status is always UNKNOWN — absence of court
+    # geometry is never evidence that someone is a spectator.
+    basis: Literal["COURT_GEOMETRY", "NO_CALIBRATION"]
+    detections_total: int
+    detections_with_court_position: int
+    # Of the detections that could be positioned, the fraction whose footpoint
+    # fell inside the play area. None when none could be positioned.
+    inside_play_area_ratio: Optional[float] = None
+    # Fraction of the sampled timeline this track spans.
+    timeline_coverage_ratio: float
+    # Total footpoint travel across the court, in metres. Distinguishes a
+    # moving player from a seated official near the line.
+    court_displacement_m: Optional[float] = None
+
+
+class MatchFormatInference(BaseModel):
+    """Match format derived from court participants, never from a raw person count."""
+
+    format: MatchFormat
+    confidence: ConfidenceLevel
+    reasons: list[str] = Field(default_factory=list)
+    participant_track_count: int
+    max_concurrent_participants: int
+    # Tracks that were detected but could not be resolved either way. A
+    # non-zero count is why a format may stay UNKNOWN.
+    unknown_track_count: int
+    non_participant_track_count: int
+
+
 class PlayerTrack(BaseModel):
     track_id: str
     # Identity is never guessed server-side — see app/tracking.py. Every
@@ -71,6 +117,10 @@ class PlayerTrack(BaseModel):
     confidence: ConfidenceLevel
     detections: list[Detection]
     gaps: list[TrackingGap] = Field(default_factory=list)
+    # Populated by app/participants.py. None means participation was never
+    # assessed for this track — which is not the same as UNKNOWN, which means
+    # it was assessed and could not be resolved.
+    participant: Optional[ParticipantEvidence] = None
 
 
 class CourtCalibration(BaseModel):
@@ -104,6 +154,7 @@ class AnalysisResult(BaseModel):
     quality: QualityAssessment
     calibration: CourtCalibration
     tracks: list[PlayerTrack] = Field(default_factory=list)
+    match_format: Optional[MatchFormatInference] = None
     warnings: list[str] = Field(default_factory=list)
     processing_metadata: ProcessingMetadata
 

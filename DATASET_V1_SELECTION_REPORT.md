@@ -1,6 +1,6 @@
 # Dataset v1 Selection Report
 
-_Generated 2026-09-11T17:12:31+00:00_
+_Generated 2026-09-12T07:36:06+00:00_
 
 Scope: acquire real badminton footage and triage it for the M5.5 validation gate. No M5 evaluation is run here, and no real-world accuracy claim is made.
 

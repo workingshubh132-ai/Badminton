@@ -256,7 +256,8 @@ def render_selection_report(root: Path, sources: list[Source], analyses: dict[st
             lines += [
                 f"### `{record['metadata']['filename']}` — **{cls['verdict']}**",
                 "",
-                f"- Likely format: **{cls['likely_format']}**",
+                f"- Likely format: **{cls['likely_format']}** — "
+                f"{cls.get('likely_format_basis', 'basis not recorded')}",
                 f"- People per frame: median {persons['median_per_frame']}, max "
                 f"{persons['max_per_frame']}; 2+ people in {persons['frames_with_2plus_pct']}% "
                 f"of {meas['sampled_frames']} sampled frames",

@@ -36,3 +36,27 @@ MIN_ACCEPTABLE_FPS = 15.0
 MIN_GOOD_FPS = 24.0
 MAX_BLANK_FRAME_RATIO = 0.3
 MAX_DECODE_FAILURE_RATIO = 0.1
+
+# --- M5.5.1 participant classification -------------------------------------
+# A person is only a "court participant" if their footpoint lands inside the
+# play area. Players legitimately run past the lines, so the play area is the
+# doubles court plus a margin; the margin is deliberately tighter than
+# video_point_to_court's 2.0m projection sanity margin, because courtside
+# officials sit just beyond the lines and must not be swept in.
+PLAY_AREA_MARGIN_M = 1.5
+
+# Fraction of a track's court-positioned detections that must fall inside the
+# play area before the track can be called a participant.
+PARTICIPANT_MIN_INSIDE_RATIO = 0.7
+# At or below this, the track is confidently off-court (spectator/official).
+# Between the two thresholds the answer is UNKNOWN, never a guess.
+NON_PARTICIPANT_MAX_INSIDE_RATIO = 0.2
+
+# Fraction of the sampled timeline a track must span. Someone walking through
+# shot briefly is not a participant.
+PARTICIPANT_MIN_TIMELINE_COVERAGE = 0.25
+
+# Metres a track's footpoint must travel across the court. Seated line judges
+# sit inside the margin but do not move; players cover ground. Used only to
+# withhold a PARTICIPANT verdict, never to assert NON_PARTICIPANT.
+PARTICIPANT_MIN_COURT_DISPLACEMENT_M = 1.0

@@ -1,6 +1,6 @@
 # Manual Download Required
 
-_Generated 2026-09-11T17:12:31+00:00_
+_Generated 2026-09-12T07:36:06+00:00_
 
 **5 of 5 candidate sources could not be acquired automatically.**
 

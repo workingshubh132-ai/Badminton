@@ -14,6 +14,7 @@ from app.config import (
 )
 from app.court import calibrate_court, video_point_to_court
 from app.detection import PersonDetector
+from app.participants import classify_participants, infer_match_format
 from app.preprocessing import probe_video, sample_frames, sha256_file
 from app.quality import assess_quality
 from app.schemas import AnalysisResult, PlayerTrack, ProcessingMetadata
@@ -64,9 +65,26 @@ def run_analysis(
     if calibration.homography is not None:
         tracks = [_enrich_with_court_coords(t, calibration.homography, frame_w, frame_h) for t in tracks]
 
+    # Which of those people were actually playing, rather than watching.
+    tracks = classify_participants(tracks, calibration.homography, frame_w, frame_h, len(sampled))
+    match_format = infer_match_format(tracks)
+
     warnings: list[str] = []
     if not tracks:
         warnings.append("No people were detected in any sampled frame.")
+    elif calibration.homography is None:
+        warnings.append(
+            "Court calibration did not produce a homography, so detected people could not be "
+            "separated into players and bystanders. Every track's participation is UNKNOWN and "
+            "match format was not inferred."
+        )
+    else:
+        unresolved = sum(1 for t in tracks if t.participant and t.participant.status == "UNKNOWN")
+        if unresolved:
+            warnings.append(
+                f"{unresolved} of {len(tracks)} track(s) could not be resolved as players or "
+                "bystanders. They are reported as UNKNOWN rather than assumed either way."
+            )
 
     return AnalysisResult(
         status="completed",
@@ -74,6 +92,7 @@ def run_analysis(
         quality=quality,
         calibration=calibration,
         tracks=tracks,
+        match_format=match_format,
         warnings=warnings,
         processing_metadata=_metadata(sampling_fps, len(sampled), start, video_path),
     )

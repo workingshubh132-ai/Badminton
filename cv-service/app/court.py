@@ -210,18 +210,30 @@ def calibrate_court(sampled_frames: list[SampledFrame]) -> CourtCalibration:
     )
 
 
+def project_point(homography: list[list[float]], x_px: float, y_px: float) -> tuple[float, float] | None:
+    """Raw video-pixel -> court-metre projection, with no plausibility margin
+    applied. Returns None only when the projection is degenerate.
+
+    Callers that need to reason about *where* a point is relative to the court
+    (participant classification) need the unclamped value; callers that want a
+    sanity-filtered court position should use `video_point_to_court`."""
+    h = np.array(homography, dtype=np.float64)
+    mapped = h @ np.array([x_px, y_px, 1.0])
+    if abs(mapped[2]) < 1e-9:
+        return None
+    return float(mapped[0] / mapped[2]), float(mapped[1] / mapped[2])
+
+
 def video_point_to_court(homography: list[list[float]], x_px: float, y_px: float) -> tuple[float, float] | None:
     """Maps a video-pixel point to real-world court meters using a
     previously-computed homography. Returns None if the point projects
     outside a reasonable margin of the court (a common sign of a bad
     homography or a point that's genuinely off-court, e.g. a spectator)."""
-    h = np.array(homography, dtype=np.float64)
-    point = np.array([x_px, y_px, 1.0])
-    mapped = h @ point
-    if abs(mapped[2]) < 1e-9:
+    projected = project_point(homography, x_px, y_px)
+    if projected is None:
         return None
-    court_x, court_y = mapped[0] / mapped[2], mapped[1] / mapped[2]
+    court_x, court_y = projected
     margin = 2.0  # meters — tolerate a bit outside the lines (players do run out)
     if -margin <= court_x <= COURT_WIDTH_M + margin and -margin <= court_y <= COURT_LENGTH_M + margin:
-        return float(court_x), float(court_y)
+        return court_x, court_y
     return None

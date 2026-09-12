@@ -378,12 +378,23 @@ def classify(metadata: dict, measurements: dict) -> dict:
             f"max clipped {luminance['max_clipped_pct']}%)"
         )
 
-    if persons["frames_with_4plus_pct"] >= 40.0:
-        likely_format = "doubles"
-    elif persons["frames_with_2plus_pct"] >= 50.0:
-        likely_format = "singles"
-    else:
-        likely_format = "unknown"
+    # Match format is deliberately NOT inferred here any more.
+    #
+    # This used to read: 4+ people in 40% of frames -> doubles, else 2+ -> singles.
+    # On real broadcast footage that reported a median of 4.5-7 people per frame
+    # and called every singles clip doubles, because the detector was counting
+    # seated line judges and crowd. A person count cannot distinguish a player
+    # from a spectator, so no threshold over it can be made sound.
+    #
+    # Format is established in app/participants.py, which separates court
+    # participants from bystanders using the calibration homography. Triage has
+    # no homography, so the honest answer here is that it does not know.
+    likely_format = "unknown"
+    format_basis = (
+        "Not inferred: triage has no court calibration, so detected people cannot be "
+        "separated into players and bystanders. Match format is established during "
+        "evaluation by app/participants.py, from court geometry rather than a person count."
+    )
 
     if reject:
         verdict = REJECT
@@ -401,6 +412,7 @@ def classify(metadata: dict, measurements: dict) -> dict:
     return {
         "verdict": verdict,
         "likely_format": likely_format,
+        "likely_format_basis": format_basis,
         "reject_reasons": reject,
         "review_reasons": review,
         "supporting_evidence": accept,
@@ -491,7 +503,8 @@ def inspect_file(path: Path, root: Path) -> dict:
     print("  analysing frames")
     measurements = analyse(path, metadata)
     verdict = classify(metadata, measurements)
-    print(f"  verdict {verdict['verdict']} (likely {verdict['likely_format']})")
+    print(f"  verdict {verdict['verdict']} (format: {verdict['likely_format']} -- "
+          "needs court calibration)")
 
     stem = path.stem
     contact_sheet(path, measurements, root / "contact_sheets" / f"{stem}.jpg", annotated=False)
