@@ -15,10 +15,24 @@ from pydantic import BaseModel, Field
 
 
 class LicenseType(str, Enum):
-    """License status for dataset videos."""
+    """Licence handling status for dataset videos.
 
-    LICENSED = "licensed"  # we have explicit permission to use/retain
-    REFERENCE = "reference"  # elite/research footage, reference only, not distributable
+    These are handling rules, not legal conclusions. LICENSE_REVIEW_REQUIRED is
+    the default everywhere: a licence nobody has read is not a permissive one,
+    and free-to-download is not the same as cleared for use.
+    """
+
+    LICENSED = "licensed"  # a human read the terms and they permit our use
+    REFERENCE = "reference"  # terms read; reference/evaluation only, not distributable
+    LICENSE_REVIEW_REQUIRED = "license_review_required"  # terms not read or unclear
+
+
+class MatchFormatLabel(str, Enum):
+    """Known match format for a source video, when it is known at all."""
+
+    SINGLES = "singles"
+    DOUBLES = "doubles"
+    UNKNOWN = "unknown"
 
 
 class VideoQuality(str, Enum):
@@ -28,6 +42,31 @@ class VideoQuality(str, Enum):
     ACCEPTABLE = "acceptable"
     POOR = "poor"
     UNUSABLE = "unusable"
+
+
+class ParticipantStatus(str, Enum):
+    """Whether an annotated person is playing on this court.
+
+    Mirrors app.schemas.ParticipantStatus so ground truth and M5 output use one
+    vocabulary. Orthogonal to PlayerIdentity: participation says "is this person
+    playing", identity says "which player is this".
+    """
+
+    PARTICIPANT = "participant"
+    NON_PARTICIPANT = "non_participant"
+    UNKNOWN = "unknown"
+
+
+class ValidationKind(str, Enum):
+    """What a set of evidence actually validates.
+
+    SYNTHETIC results come from rendered fixtures and prove only that the
+    machinery computes what it claims. They are never evidence of real-world
+    accuracy, and the report must never merge the two.
+    """
+
+    SYNTHETIC = "synthetic"
+    REAL_WORLD = "real_world"
 
 
 class PlayerIdentity(str, Enum):
@@ -82,6 +121,37 @@ class VideoMetadata(BaseModel):
     codec: Optional[str] = Field(None, description="Video codec")
     ingested_at: datetime = Field(default_factory=datetime.utcnow)
     notes: Optional[str] = Field(None, description="Annotator notes")
+
+    # --- M5.5.2 manifest fields ---
+    # Defaults are deliberately the conservative answer to every question, so a
+    # forgotten flag under-claims rather than over-claims.
+    validation_kind: ValidationKind = Field(
+        default=ValidationKind.SYNTHETIC,
+        description=(
+            "Whether evaluating this video constitutes real-world validation. Defaults to "
+            "SYNTHETIC so footage only counts as real-world when someone explicitly says so."
+        ),
+    )
+    license_terms_url: Optional[str] = Field(
+        None, description="Where the applicable licence text actually lives"
+    )
+    license_verified_by: Optional[str] = Field(
+        None, description="Who read the licence terms. Null means nobody has."
+    )
+    provenance: Optional[str] = Field(
+        None, description="Where this footage came from and how it was obtained"
+    )
+    has_burned_in_overlays: Optional[bool] = Field(
+        None,
+        description=(
+            "True if graphics are rendered into the pixels (pose skeletons, drawn court "
+            "lines, scoreboards). Such footage corrupts court evaluation. None = not checked."
+        ),
+    )
+    match_format: MatchFormatLabel = Field(
+        default=MatchFormatLabel.UNKNOWN,
+        description="Known format of the recorded match, if known",
+    )
 
 
 class ClipMetadata(BaseModel):
@@ -168,10 +238,22 @@ class CourtCorners(BaseModel):
 
 
 class PlayerAnnotation(BaseModel):
-    """Annotated player in a frame."""
+    """An annotated person in a frame.
+
+    A person, not necessarily a player: spectators and officials are annotated
+    too, marked NON_PARTICIPANT, so participant classification can be scored
+    against them.
+    """
 
     identity: PlayerIdentity = Field(..., description="athlete | opponent | unknown")
     bbox: BoundingBox = Field(..., description="Normalized bounding box")
+    # Defaults to UNKNOWN so an annotator who genuinely cannot tell is not
+    # forced into a guess, and so annotations written before this field existed
+    # load as "not stated" rather than silently becoming participants.
+    participant: ParticipantStatus = Field(
+        default=ParticipantStatus.UNKNOWN,
+        description="participant | non_participant | unknown",
+    )
     confidence: Optional[float] = Field(
         None, ge=0, le=1, description="Annotator confidence in identity"
     )
@@ -248,6 +330,44 @@ class TrackingAccuracy(BaseModel):
     max_gap_duration_frames: Optional[int] = Field(None)
 
 
+class ParticipantAccuracy(BaseModel):
+    """How well M5 separated court participants from bystanders.
+
+    Scored only against people the annotator actually resolved. Annotated
+    UNKNOWNs are excluded from precision/recall rather than counted as errors:
+    a human who could not tell is not ground truth for either answer.
+    """
+
+    annotated_participants: int = Field(..., description="Ground-truth participants")
+    annotated_non_participants: int = Field(..., description="Ground-truth bystanders")
+    annotated_unknown: int = Field(default=0, description="Annotator could not resolve")
+
+    predicted_participants: int = Field(..., description="M5 called these participants")
+    predicted_non_participants: int = Field(...)
+    predicted_unknown: int = Field(default=0, description="M5 could not resolve")
+
+    true_positives: int = Field(..., description="Participant, correctly called participant")
+    false_positives: int = Field(..., description="Bystander wrongly called a participant")
+    false_negatives: int = Field(..., description="Participant wrongly called a bystander")
+
+    precision: Optional[float] = Field(None, ge=0, le=1)
+    recall: Optional[float] = Field(None, ge=0, le=1)
+    f1: Optional[float] = Field(None, ge=0, le=1)
+
+    # The safety-critical number: of annotated bystanders, the fraction M5
+    # promoted to participants. A spectator treated as a player corrupts every
+    # downstream inference, so this is tracked separately from precision.
+    false_participant_rate: Optional[float] = Field(
+        None, ge=0, le=1, description="Bystanders wrongly called participants / all bystanders"
+    )
+    # Of all resolvable people, the fraction M5 left UNKNOWN. High values mean
+    # the classifier is safe but not yet useful.
+    unresolved_rate: Optional[float] = Field(
+        None, ge=0, le=1, description="M5 UNKNOWN / people the annotator resolved"
+    )
+    scored_people: int = Field(default=0, description="People contributing to precision/recall")
+
+
 class QualityAssessmentAccuracy(BaseModel):
     """Video quality classification accuracy."""
 
@@ -270,6 +390,15 @@ class ClipEvaluationResult(BaseModel):
     detection_accuracy: DetectionAccuracy = Field(...)
     tracking_accuracy: TrackingAccuracy = Field(...)
     quality_accuracy: QualityAssessmentAccuracy = Field(...)
+    participant_accuracy: Optional[ParticipantAccuracy] = Field(
+        None, description="None when the annotation carries no participant labels"
+    )
+    # Carried from the source video's licence/provenance record. Determines
+    # which half of the report this result may appear in.
+    validation_kind: ValidationKind = Field(
+        default=ValidationKind.SYNTHETIC,
+        description="Whether this evaluated real footage or a rendered fixture",
+    )
     notes: Optional[str] = Field(None)
 
 
@@ -314,8 +443,18 @@ class EvaluationReport(BaseModel):
     version: str = Field(default="1.0")
     generated_at: datetime = Field(default_factory=datetime.utcnow)
     dataset_name: Optional[str] = Field(None)
+    # Kept for backward compatibility: every clip, both kinds.
     clips_evaluated: list[ClipEvaluationResult] = Field(...)
+    # The two kinds of evidence, never merged. Component readiness and the
+    # decision gate below are derived from real_world_clips ONLY -- synthetic
+    # fixtures prove the machinery computes, never that M5 is accurate.
+    real_world_clips: list[ClipEvaluationResult] = Field(default_factory=list)
+    synthetic_clips: list[ClipEvaluationResult] = Field(default_factory=list)
+    has_real_world_evidence: bool = Field(
+        default=False, description="False means no readiness claim is supportable"
+    )
     failures: list[FailureRecord] = Field(default_factory=list)
+    participant_readiness: Optional[ComponentReadiness] = Field(None)
     court_readiness: ComponentReadiness = Field(...)
     detection_readiness: ComponentReadiness = Field(...)
     tracking_readiness: ComponentReadiness = Field(...)

@@ -16,7 +16,7 @@ from io import BytesIO
 from pathlib import Path
 
 import cv2
-from flask import Flask, jsonify, render_string, request, send_file
+from flask import Flask, jsonify, request, send_file
 
 from .dataset import DatasetManager
 from .schemas import (
@@ -121,7 +121,8 @@ def create_app(dataset_dir: str | Path) -> Flask:
                 <ul>
                     <li>Click 4 points to mark court corners (top-left, top-right, bottom-right, bottom-left)</li>
                     <li>Drag to draw player bounding boxes</li>
-                    <li>Use controls to assign player identity and mark quality</li>
+                    <li>Use controls to assign identity and on-court status, and mark quality</li>
+                    <li><b>Box everyone visible</b>, including spectators and officials — mark those as Bystander so participant classification can be scored against them</li>
                 </ul>
             </div>
 
@@ -135,13 +136,24 @@ def create_app(dataset_dir: str | Path) -> Flask:
                     </select>
                 </label>
                 <br/><br/>
-                <label>Player Identity (for next box):
+                <label>Identity (for next box):
                     <select id="player-identity">
                         <option value="unknown" selected>Unknown</option>
                         <option value="athlete">Athlete</option>
                         <option value="opponent">Opponent</option>
                     </select>
                 </label>
+                &nbsp;&nbsp;
+                <label>On court? (for next box):
+                    <select id="player-participant">
+                        <option value="unknown" selected>Unknown</option>
+                        <option value="participant">Participant (playing)</option>
+                        <option value="non_participant">Bystander (spectator/official)</option>
+                    </select>
+                </label>
+                <br/><br/>
+                <button onclick="undoBox()">Undo Last Box</button>
+                <button onclick="clearBoxes()">Clear Boxes</button>
                 <br/><br/>
                 <button onclick="markCourtCorners()">Mark Court Corners</button>
                 <button onclick="clearCourtCorners()">Clear Court</button>
@@ -213,14 +225,20 @@ def create_app(dataset_dir: str | Path) -> Flask:
 
                 function drawMarkers(ctx) {{
                     markers.forEach(marker => {{
-                        ctx.strokeStyle = '#ff0000';
+                        const colour = marker.participant === 'participant' ? '#00e5ff'
+                                     : marker.participant === 'non_participant' ? '#ff9800'
+                                     : '#ff0000';
+                        ctx.strokeStyle = colour;
                         ctx.lineWidth = 2;
                         ctx.strokeRect(marker.x1, marker.y1, marker.x2 - marker.x1, marker.y2 - marker.y1);
-                        ctx.fillStyle = '#ff0000';
+                        ctx.fillStyle = colour;
                         ctx.font = '12px Arial';
-                        ctx.fillText(marker.identity, marker.x1, marker.y1 - 5);
+                        ctx.fillText(marker.identity + ' / ' + marker.participant, marker.x1, marker.y1 - 5);
                     }});
                 }}
+
+                function undoBox() {{ markers.pop(); drawFrame(currentFrameIndex); }}
+                function clearBoxes() {{ markers = []; drawFrame(currentFrameIndex); }}
 
                 function markCourtCorners() {{
                     markerMode = !markerMode;
@@ -234,7 +252,33 @@ def create_app(dataset_dir: str | Path) -> Flask:
                     drawFrame(currentFrameIndex);
                 }}
 
-                document.getElementById('canvas').addEventListener('click', function(e) {{
+                let dragStart = null;
+                const canvasEl = document.getElementById('canvas');
+
+                canvasEl.addEventListener('mousedown', function(e) {{
+                    if (markerMode) return;  // marking court corners, not boxes
+                    const rect = this.getBoundingClientRect();
+                    dragStart = {{x: e.clientX - rect.left, y: e.clientY - rect.top}};
+                }});
+
+                canvasEl.addEventListener('mouseup', function(e) {{
+                    if (markerMode || !dragStart) return;
+                    const rect = this.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const x1 = Math.min(dragStart.x, x), x2 = Math.max(dragStart.x, x);
+                    const y1 = Math.min(dragStart.y, y), y2 = Math.max(dragStart.y, y);
+                    dragStart = null;
+                    if (x2 - x1 < 4 || y2 - y1 < 4) return;  // a click, not a box
+                    markers.push({{
+                        x1: x1, y1: y1, x2: x2, y2: y2,
+                        identity: document.getElementById('player-identity').value,
+                        participant: document.getElementById('player-participant').value
+                    }});
+                    drawFrame(currentFrameIndex);
+                }});
+
+                canvasEl.addEventListener('click', function(e) {{
                     if (!markerMode) return;
                     const rect = this.getBoundingClientRect();
                     const x = e.clientX - rect.left;
@@ -255,6 +299,8 @@ def create_app(dataset_dir: str | Path) -> Flask:
                 function goBack() {{ window.location.href = '/'; }}
 
                 async function saveAnnotation() {{
+                    // Normalise against the actual canvas, not an assumed 1280x720.
+                    const W = canvasEl.width, H = canvasEl.height;
                     const annotation = {{
                         clip_id: clipId,
                         version: '1.0',
@@ -263,12 +309,19 @@ def create_app(dataset_dir: str | Path) -> Flask:
                             timestamp_seconds: 0,
                             quality: document.getElementById('quality').value,
                             court_corners: courtCorners.length === 4 ? {{
-                                top_left: [courtCorners[0].x / 1280, courtCorners[0].y / 720],
-                                top_right: [courtCorners[1].x / 1280, courtCorners[1].y / 720],
-                                bottom_right: [courtCorners[2].x / 1280, courtCorners[2].y / 720],
-                                bottom_left: [courtCorners[3].x / 1280, courtCorners[3].y / 720],
+                                top_left: [courtCorners[0].x / W, courtCorners[0].y / H],
+                                top_right: [courtCorners[1].x / W, courtCorners[1].y / H],
+                                bottom_right: [courtCorners[2].x / W, courtCorners[2].y / H],
+                                bottom_left: [courtCorners[3].x / W, courtCorners[3].y / H],
                             }} : null,
-                            players: []
+                            players: markers.map(m => ({{
+                                identity: m.identity,
+                                participant: m.participant,
+                                bbox: {{
+                                    x1: m.x1 / W, y1: m.y1 / H,
+                                    x2: m.x2 / W, y2: m.y2 / H
+                                }}
+                            }}))
                         }}]
                     }};
 

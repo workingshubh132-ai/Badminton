@@ -15,6 +15,8 @@ from typing import Optional
 from .schemas import (
     ClipMetadata,
     LicenseType,
+    MatchFormatLabel,
+    ValidationKind,
     VideoMetadata,
 )
 
@@ -48,6 +50,12 @@ class DatasetManager:
         camera_description: Optional[str] = None,
         players_named: Optional[list[str]] = None,
         notes: Optional[str] = None,
+        validation_kind: "ValidationKind" = None,
+        license_terms_url: Optional[str] = None,
+        license_verified_by: Optional[str] = None,
+        provenance: Optional[str] = None,
+        has_burned_in_overlays: Optional[bool] = None,
+        match_format: "MatchFormatLabel" = None,
     ) -> str:
         """
         Ingest a video file and register it in the dataset.
@@ -112,8 +120,20 @@ class DatasetManager:
             fps=fps,
             codec=codec,
             notes=notes,
+            **{
+                k: v
+                for k, v in {
+                    "validation_kind": validation_kind,
+                    "license_terms_url": license_terms_url,
+                    "license_verified_by": license_verified_by,
+                    "provenance": provenance,
+                    "has_burned_in_overlays": has_burned_in_overlays,
+                    "match_format": match_format,
+                }.items()
+                if v is not None
+            },
         )
-        self.inventory["videos"][video_id] = json.loads(metadata.model_dump_json(default=str))
+        self.inventory["videos"][video_id] = metadata.model_dump(mode="json")
         self._save_inventory()
 
         return video_id
@@ -184,7 +204,7 @@ class DatasetManager:
             players_visible=players_visible,
             notes=notes,
         )
-        self.inventory["clips"][clip_id] = json.loads(metadata.model_dump_json(default=str))
+        self.inventory["clips"][clip_id] = metadata.model_dump(mode="json")
         self._save_inventory()
 
         return clip_id
@@ -259,6 +279,15 @@ class DatasetManager:
             if not eval_path.exists():
                 unevaluated.append(clip_id)
         return unevaluated
+
+    def list_evaluated_clips(self) -> list[str]:
+        """List clips that have an evaluation result on disk.
+
+        Counted from actual files rather than inferred by subtracting the
+        unevaluated list from the clip total -- that arithmetic counts clips
+        which were never annotated as though they had been evaluated.
+        """
+        return [c for c in self.list_clips() if self.get_evaluation_path(c).exists()]
 
     def save_annotation(self, clip_id: str, annotation_data: dict) -> None:
         """Save annotation data for a clip."""

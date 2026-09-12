@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .dataset import DatasetManager
-from .schemas import ComponentReadiness, ComponentStatus, EvaluationReport
+from .schemas import (
+    ComponentReadiness,
+    ComponentStatus,
+    EvaluationReport,
+    ValidationKind,
+)
 
 
 class ReportGenerator:
@@ -40,25 +45,49 @@ class ReportGenerator:
         if not clip_results:
             raise ValueError("No evaluated clips found")
 
-        # Aggregate metrics
-        court_metrics = self._aggregate_court_metrics(clip_results)
-        detection_metrics = self._aggregate_detection_metrics(clip_results)
-        tracking_metrics = self._aggregate_tracking_metrics(clip_results)
-        quality_metrics = self._aggregate_quality_metrics(clip_results)
+        # Partition the evidence. Readiness and the decision gate are computed
+        # from real-world clips alone; a synthetic fixture can never move them.
+        real_world = [
+            r for r in clip_results if r.get("validation_kind") == ValidationKind.REAL_WORLD.value
+        ]
+        synthetic = [r for r in clip_results if r not in real_world]
+
+        # Aggregate metrics -- real-world only.
+        court_metrics = self._aggregate_court_metrics(real_world)
+        detection_metrics = self._aggregate_detection_metrics(real_world)
+        tracking_metrics = self._aggregate_tracking_metrics(real_world)
+        quality_metrics = self._aggregate_quality_metrics(real_world)
+        participant_metrics = self._aggregate_participant_metrics(real_world)
 
         # Classify components
-        court_readiness = self._classify_court(court_metrics)
-        detection_readiness = self._classify_detection(detection_metrics)
-        tracking_readiness = self._classify_tracking(tracking_metrics)
-        quality_readiness = self._classify_quality(quality_metrics)
-
-        # Determine decision gate
-        decision, rationale = self._determine_decision_gate(
-            court_readiness,
-            detection_readiness,
-            tracking_readiness,
-            quality_readiness,
-        )
+        if real_world:
+            court_readiness = self._classify_court(court_metrics)
+            detection_readiness = self._classify_detection(detection_metrics)
+            tracking_readiness = self._classify_tracking(tracking_metrics)
+            quality_readiness = self._classify_quality(quality_metrics)
+            participant_readiness = self._classify_participant(participant_metrics)
+            decision, rationale = self._determine_decision_gate(
+                court_readiness,
+                detection_readiness,
+                tracking_readiness,
+                quality_readiness,
+            )
+        else:
+            # No real footage has been evaluated. Every component is unproven,
+            # and no decision gate is reachable -- including gate A.
+            court_readiness = self._unproven("Court calibration")
+            detection_readiness = self._unproven("Player detection")
+            tracking_readiness = self._unproven("Player tracking")
+            quality_readiness = self._unproven("Quality assessment")
+            participant_readiness = self._unproven("Participant classification")
+            decision = "NO_REAL_WORLD_EVIDENCE"
+            rationale = (
+                f"{len(synthetic)} synthetic clip(s) evaluated and 0 real-world clips. "
+                "Synthetic fixtures verify that the evaluation machinery runs and computes "
+                "the metrics it claims; they say nothing about accuracy on real badminton "
+                "footage. No component readiness can be asserted and no decision gate -- "
+                "including gate A -- can be reached until real footage is evaluated."
+            )
 
         # Collect failures
         failures = self._collect_failures(clip_results)
@@ -66,7 +95,11 @@ class ReportGenerator:
         return EvaluationReport(
             generated_at=datetime.utcnow(),
             clips_evaluated=clip_results,
+            real_world_clips=real_world,
+            synthetic_clips=synthetic,
+            has_real_world_evidence=bool(real_world),
             failures=failures,
+            participant_readiness=participant_readiness,
             court_readiness=court_readiness,
             detection_readiness=detection_readiness,
             tracking_readiness=tracking_readiness,
@@ -78,7 +111,121 @@ class ReportGenerator:
                 "detection": detection_metrics,
                 "tracking": tracking_metrics,
                 "quality": quality_metrics,
+                "participant": participant_metrics,
             },
+        )
+
+    def _unproven(self, component_name: str) -> ComponentReadiness:
+        """Readiness for a component no real footage has exercised.
+
+        UNRELIABLE is the honest classification here: not "we measured it and it
+        failed", but "nothing supports using this downstream yet". The rationale
+        says which, so nobody reads it as a measured failure.
+        """
+        return ComponentReadiness(
+            component=component_name,
+            status=ComponentStatus.UNRELIABLE,
+            reasoning=(
+                f"{component_name} has never been evaluated against real badminton footage. "
+                "This is an absence of evidence, not a measured failure -- the component may "
+                "work well or badly, and we do not know which."
+            ),
+            metric_summary={"real_world_clips_evaluated": 0},
+            critical_issues=["No real-world evidence exists for this component."],
+            recommended_improvements=[
+                "Evaluate real, licensed footage with ground-truth annotations before relying "
+                "on this component."
+            ],
+        )
+
+    def _aggregate_participant_metrics(self, clip_results: list[dict]) -> dict[str, Any]:
+        """Aggregate participant-classification accuracy across clips."""
+        scored = [
+            r["participant_accuracy"]
+            for r in clip_results
+            if r.get("participant_accuracy")
+        ]
+        if not scored:
+            return {"clips_with_participant_labels": 0}
+
+        def mean_of(key: str) -> Optional[float]:
+            values = [s[key] for s in scored if s.get(key) is not None]
+            return statistics.mean(values) if values else None
+
+        return {
+            "clips_with_participant_labels": len(scored),
+            "total_scored_people": sum(s.get("scored_people", 0) for s in scored),
+            "total_false_participants": sum(s.get("false_positives", 0) for s in scored),
+            "mean_precision": mean_of("precision"),
+            "mean_recall": mean_of("recall"),
+            "mean_f1": mean_of("f1"),
+            "mean_false_participant_rate": mean_of("false_participant_rate"),
+            "mean_unresolved_rate": mean_of("unresolved_rate"),
+        }
+
+    def _classify_participant(self, metrics: dict[str, Any]) -> ComponentReadiness:
+        """Classify participant separation.
+
+        The false-participant rate is weighted above precision on purpose: a
+        spectator promoted to a player corrupts every downstream inference, so it
+        is a worse failure than leaving someone unresolved.
+        """
+        if not metrics.get("clips_with_participant_labels"):
+            return ComponentReadiness(
+                component="Participant classification",
+                status=ComponentStatus.UNRELIABLE,
+                reasoning=(
+                    "No evaluated clip carries participant annotations, so the separation of "
+                    "players from spectators and officials has never been scored."
+                ),
+                metric_summary={"clips_with_participant_labels": 0},
+                recommended_improvements=[
+                    "Annotate participant status on real footage and re-evaluate."
+                ],
+            )
+
+        false_rate = metrics.get("mean_false_participant_rate")
+        unresolved = metrics.get("mean_unresolved_rate")
+        precision = metrics.get("mean_precision")
+        recall = metrics.get("mean_recall")
+        summary = {
+            "precision": precision,
+            "recall": recall,
+            "false_participant_rate": false_rate,
+            "unresolved_rate": unresolved,
+            "people_scored": metrics.get("total_scored_people", 0),
+            "clips_with_participant_labels": metrics["clips_with_participant_labels"],
+        }
+
+        if false_rate is not None and false_rate > 0.10:
+            status = ComponentStatus.UNRELIABLE
+            reasoning = (
+                f"{false_rate:.0%} of annotated bystanders were promoted to participants. "
+                "Spectators entering player analysis corrupt everything downstream."
+            )
+        elif precision is not None and recall is not None and precision >= 0.9 and recall >= 0.85:
+            status = ComponentStatus.PRODUCTION_READY
+            reasoning = "Participants separated from bystanders accurately on real footage."
+        elif unresolved is not None and unresolved > 0.5:
+            status = ComponentStatus.NEEDS_IMPROVEMENT
+            reasoning = (
+                f"{unresolved:.0%} of people were left UNKNOWN. Safe, but too often undecided "
+                "to support downstream analysis."
+            )
+        else:
+            status = ComponentStatus.VALIDATION_READY
+            reasoning = "Participant separation works on real footage but needs monitoring."
+
+        return ComponentReadiness(
+            component="Participant classification",
+            status=status,
+            reasoning=reasoning,
+            metric_summary=summary,
+            recommended_improvements=(
+                []
+                if status == ComponentStatus.PRODUCTION_READY
+                else ["Improve before relying on participant-derived inferences."]
+            ),
         )
 
     def _aggregate_court_metrics(self, clip_results: list[dict]) -> dict[str, Any]:
@@ -379,9 +526,36 @@ class ReportGenerator:
 
     def render_markdown(self, report: EvaluationReport) -> str:
         """Render report as markdown."""
+        real_n = len(report.real_world_clips)
+        synth_n = len(report.synthetic_clips)
+        banner = (
+            "> **This report contains NO real-world validation.**\n>\n"
+            f"> {synth_n} synthetic clip(s) were evaluated and {real_n} real-world clip(s). "
+            "Synthetic fixtures are rendered images: they verify that the evaluation "
+            "machinery runs and computes the metrics it claims, and prove nothing about "
+            "accuracy on real badminton footage. Every component below is classified "
+            "UNRELIABLE for absence of evidence, which is not the same as a measured "
+            "failure.\n"
+            if not report.has_real_world_evidence
+            else
+            "> **Evidence basis: real-world footage.**\n>\n"
+            f"> Component readiness and the decision gate below are computed from the "
+            f"{real_n} real-world clip(s) ONLY. {synth_n} synthetic clip(s) were also "
+            "evaluated; they are reported separately as machinery verification and are "
+            "excluded from every metric, classification and gate decision below.\n"
+        )
+
         md = f"""# M5.5 EVALUATION REPORT
 
 Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
+
+{banner}
+## EVIDENCE BASIS
+
+| Kind | Clips | Counts toward readiness |
+|------|-------|-------------------------|
+| Real-world footage | {real_n} | yes |
+| Synthetic fixtures | {synth_n} | no — machinery verification only |
 
 ## EXECUTIVE SUMMARY
 
@@ -390,6 +564,10 @@ Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
 {report.decision_rationale}
 
 ## COMPONENT READINESS
+
+### Participant Classification: {report.participant_readiness.status.value if report.participant_readiness else "not assessed"}
+
+{report.participant_readiness.reasoning if report.participant_readiness else "No participant readiness was computed."}
 
 ### Court Calibration: {report.court_readiness.status.value}
 
@@ -439,18 +617,47 @@ Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}
 ## PER-CLIP RESULTS
 
 """
-        for result in report.clips_evaluated:
-            md += f"""
-### {result.get("clip_id")}
+        def render_clip_rows(results, heading, caveat):
+            nonlocal md
+            md += f"\n### {heading}\n\n{caveat}\n"
+            if not results:
+                md += "\n_None._\n"
+                return
+            md += (
+                "\n| Clip | Court | Detection P/R | Tracks | Quality | "
+                "Participant P/R | False-participant | Unresolved |\n"
+                "|---|---|---|---|---|---|---|---|\n"
+            )
+            for result in results:
+                def pct(value):
+                    return "n/a" if value is None else f"{value:.0%}"
 
-| Component | Result |
-|-----------|--------|
-| Court Calibration | {result.get("court_accuracy", {}).get("status", "?")} |
-| Player Detection | Precision {result.get("detection_accuracy", {}).get("precision", "?"):.1%} / Recall {result.get("detection_accuracy", {}).get("recall", "?"):.1%} |
-| Tracking | {result.get("tracking_accuracy", {}).get("tracks_found", 0)} tracks |
-| Quality Assessment | {result.get("quality_accuracy", {}).get("accuracy", "?"):.1%} accurate |
-| Processing Time | {result.get("processing_seconds", "?"):.2f}s |
-"""
+                det = result.detection_accuracy
+                part = result.participant_accuracy
+                md += (
+                    f"| `{result.clip_id}` "
+                    f"| {result.court_accuracy.status} "
+                    f"| {pct(det.precision)} / {pct(det.recall)} "
+                    f"| {result.tracking_accuracy.tracks_found} "
+                    f"| {pct(result.quality_accuracy.accuracy)} "
+                    f"| {pct(part.precision) if part else 'not scored'} / "
+                    f"{pct(part.recall) if part else 'n/a'} "
+                    f"| {pct(part.false_participant_rate) if part else 'n/a'} "
+                    f"| {pct(part.unresolved_rate) if part else 'n/a'} |\n"
+                )
+
+        render_clip_rows(
+            report.real_world_clips,
+            "Real-world footage",
+            "These results, and only these, drive the component readiness and decision gate above.",
+        )
+        render_clip_rows(
+            report.synthetic_clips,
+            "Synthetic fixtures",
+            "Machinery verification only. Rendered images, not badminton. These numbers are "
+            "excluded from every classification and from the decision gate, and must never be "
+            "quoted as real-world accuracy.",
+        )
 
         if report.failures:
             md += f"""
@@ -496,7 +703,7 @@ See "Decision Gate" section above for specific recommendation.
 
         # Also save JSON report
         json_path = output_path.with_suffix(".json")
-        json_path.write_text(json.dumps(json.loads(report.model_dump_json(default=str)), indent=2))
+        json_path.write_text(json.dumps(report.model_dump(mode="json"), indent=2))
 
         return output_path
 

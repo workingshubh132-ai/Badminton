@@ -59,6 +59,13 @@ Commands:
     Options:
       --dataset-dir PATH              Dataset root
 
+  manifest
+    Write DATASET_MANIFEST.md/.json: provenance, licence, resolution, FPS,
+    duration, camera, burned-in overlays and known format for every source
+    Options:
+      --dataset-dir PATH              Dataset root
+      --output-dir PATH               Where to write (default: dataset root)
+
   dataset-v1
     Acquire candidate footage, measure it, build contact sheets, classify it,
     and regenerate DATASET_V1_SELECTION_REPORT.md + MANUAL_DOWNLOAD_REQUIRED.md
@@ -147,19 +154,31 @@ Examples:
             print(f"  {vid}: {metadata.get('duration_seconds', '?'):.1f}s @ {metadata.get('fps', '?'):.1f} FPS")
 
         clips = dataset.list_clips()
-        print(f"\nClips: {len(clips)}")
         annotated = dataset.list_annotated_clips()
+        unannotated = dataset.list_unannotated_clips()
+        evaluated = dataset.list_evaluated_clips()
         unevaluated = dataset.list_unevaluated_clips()
-        print(f"  Annotated: {len(annotated)}")
-        print(f"  Evaluated: {len(clips) - len(unevaluated)}")
-        print(f"  Unevaluated: {len(unevaluated)}")
+        print(f"\nClips: {len(clips)}")
+        print(f"  Annotated:            {len(annotated)}")
+        print(f"  Awaiting annotation:  {len(unannotated)}")
+        print(f"  Evaluated:            {len(evaluated)}")
+        print(f"  Awaiting evaluation:  {len(unevaluated)}")
 
+        if unannotated:
+            print(f"\n  Needs annotation: {', '.join(unannotated[:5])}")
+            if len(unannotated) > 5:
+                print(f"  ... and {len(unannotated) - 5} more")
         if unevaluated:
             print(f"\n  Waiting for evaluation: {', '.join(unevaluated[:5])}")
             if len(unevaluated) > 5:
                 print(f"  ... and {len(unevaluated) - 5} more")
 
         print(f"{'=' * 70}\n")
+
+    elif command == "manifest":
+        from .manifest import main as manifest_main
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        manifest_main()
 
     elif command == "dataset-v1":
         from .dataset_v1 import run as dataset_v1_run

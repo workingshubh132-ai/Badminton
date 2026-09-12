@@ -17,7 +17,14 @@ import numpy as np
 from app.detection import PersonDetector
 from app.pipeline import run_analysis
 from .dataset import DatasetManager
+PARTICIPANT_MATCH_IOU_THRESHOLD = 0.3
+# Annotated frames and M5's sampled frames rarely land on the same instant.
+PARTICIPANT_MATCH_TIME_TOLERANCE_S = 0.75
+
 from .schemas import (
+    ValidationKind,
+    ParticipantStatus,
+    ParticipantAccuracy,
     AnnotationMetadata,
     ClipEvaluationResult,
     CourtAccuracy,
@@ -114,22 +121,36 @@ class RealFootageEvaluator:
         # Evaluate quality
         quality_accuracy = self._evaluate_quality(annotation, m5_result)
 
+        # Evaluate participant classification (M5.5.1) against annotated status.
+        participant_accuracy = self._evaluate_participants(annotation, m5_result)
+
         # Collect failures
         failures = self._identify_failures(annotation, m5_result, court_accuracy, detection_accuracy)
 
-        # Create result
+        # Whether this counts as real-world validation is a property of the
+        # source video's provenance, never of the evaluation run. Anything we
+        # cannot confirm is real is reported as synthetic.
+        clip_metadata = self.dataset.inventory["clips"].get(clip_id, {})
+        source_video_id = clip_metadata.get("source_video_id", "")
+        video_metadata = self.dataset.get_video_metadata(source_video_id) or {}
+        validation_kind = ValidationKind(
+            video_metadata.get("validation_kind", ValidationKind.SYNTHETIC.value)
+        )
+
         result = ClipEvaluationResult(
             clip_id=clip_id,
-            source_video_id=annotation.clip_id,
+            source_video_id=source_video_id,
             processing_seconds=processing_seconds,
             court_accuracy=court_accuracy,
             detection_accuracy=detection_accuracy,
             tracking_accuracy=tracking_accuracy,
             quality_accuracy=quality_accuracy,
+            participant_accuracy=participant_accuracy,
+            validation_kind=validation_kind,
         )
 
         # Save evaluation
-        self.dataset.save_evaluation(clip_id, json.loads(result.model_dump_json(default=str)))
+        self.dataset.save_evaluation(clip_id, result.model_dump(mode="json"))
 
         return result
 
@@ -194,7 +215,7 @@ class RealFootageEvaluator:
             max_corner_error_px=max_error,
             corner_errors_px=all_corner_errors[:10],  # Store first 10 for reference
             iou_with_ground_truth=mean_iou,
-            homography_succeeded=m5_result.calibration.homography_matrix is not None,
+            homography_succeeded=m5_result.calibration.homography is not None,
         )
 
     def _evaluate_detection(self, annotation: AnnotationMetadata, m5_result: Any) -> DetectionAccuracy:
@@ -233,6 +254,120 @@ class RealFootageEvaluator:
             recall=recall,
             mean_iou=None,  # Would require per-frame bbox matching
         )
+
+    def _evaluate_participants(
+        self, annotation: AnnotationMetadata, m5_result: Any
+    ) -> Optional[ParticipantAccuracy]:
+        """Score M5's participant classification against annotated ground truth.
+
+        Each annotated person is matched to an M5 detection spatially (best IoU at
+        the nearest sampled timestamp), and the two participant verdicts compared.
+
+        People the annotator left UNKNOWN are excluded from precision/recall: a
+        human who could not tell is not ground truth for either answer. M5's own
+        UNKNOWNs are kept, counted as neither TP nor FP, and surfaced separately
+        as unresolved_rate -- treating "I don't know" as a wrong answer would
+        reward a classifier that guesses.
+        """
+        annotated = [
+            (frame, player)
+            for frame in annotation.frames
+            for player in frame.players
+        ]
+        if not annotated:
+            return None
+        if all(p.participant == ParticipantStatus.UNKNOWN for _, p in annotated):
+            # No resolved labels anywhere: nothing to score against.
+            return None
+
+        gt_participants = sum(1 for _, p in annotated if p.participant == ParticipantStatus.PARTICIPANT)
+        gt_non = sum(1 for _, p in annotated if p.participant == ParticipantStatus.NON_PARTICIPANT)
+        gt_unknown = sum(1 for _, p in annotated if p.participant == ParticipantStatus.UNKNOWN)
+
+        tp = fp = fn = 0
+        predicted_participant = predicted_non = predicted_unknown = 0
+        scored = 0
+        false_participants = 0
+
+        for frame, player in annotated:
+            if player.participant == ParticipantStatus.UNKNOWN:
+                continue
+            scored += 1
+            predicted = self._match_track_status(frame, player, m5_result)
+
+            if predicted == "PARTICIPANT":
+                predicted_participant += 1
+            elif predicted == "NON_PARTICIPANT":
+                predicted_non += 1
+            else:
+                predicted_unknown += 1
+
+            if player.participant == ParticipantStatus.PARTICIPANT:
+                if predicted == "PARTICIPANT":
+                    tp += 1
+                elif predicted == "NON_PARTICIPANT":
+                    fn += 1
+            else:  # annotated NON_PARTICIPANT
+                if predicted == "PARTICIPANT":
+                    fp += 1
+                    false_participants += 1
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else None
+        recall = tp / (tp + fn) if (tp + fn) > 0 else None
+        f1 = (
+            2 * precision * recall / (precision + recall)
+            if precision is not None and recall is not None and (precision + recall) > 0
+            else None
+        )
+
+        return ParticipantAccuracy(
+            annotated_participants=gt_participants,
+            annotated_non_participants=gt_non,
+            annotated_unknown=gt_unknown,
+            predicted_participants=predicted_participant,
+            predicted_non_participants=predicted_non,
+            predicted_unknown=predicted_unknown,
+            true_positives=tp,
+            false_positives=fp,
+            false_negatives=fn,
+            precision=precision,
+            recall=recall,
+            f1=f1,
+            false_participant_rate=(false_participants / gt_non) if gt_non else None,
+            unresolved_rate=(predicted_unknown / scored) if scored else None,
+            scored_people=scored,
+        )
+
+    def _match_track_status(self, frame, player, m5_result: Any) -> str:
+        """Participant status M5 assigned to whichever track best overlaps this
+        annotated person. Returns UNKNOWN when nothing matches well enough --
+        an unmatched person is unresolved, not a bystander."""
+        gt_box = (player.bbox.x1, player.bbox.y1, player.bbox.x2, player.bbox.y2)
+        best_iou, best_status = 0.0, "UNKNOWN"
+
+        for track in m5_result.tracks:
+            if not track.detections:
+                continue
+            nearest = min(
+                track.detections,
+                key=lambda d: abs(d.timestamp_seconds - frame.timestamp_seconds),
+            )
+            if abs(nearest.timestamp_seconds - frame.timestamp_seconds) > PARTICIPANT_MATCH_TIME_TOLERANCE_S:
+                continue
+            candidate = (
+                nearest.bbox.x,
+                nearest.bbox.y,
+                nearest.bbox.x + nearest.bbox.width,
+                nearest.bbox.y + nearest.bbox.height,
+            )
+            iou = self._bbox_iou(gt_box, candidate)
+            if iou > best_iou:
+                best_iou = iou
+                best_status = (
+                    track.participant.status if track.participant is not None else "UNKNOWN"
+                )
+
+        return best_status if best_iou >= PARTICIPANT_MATCH_IOU_THRESHOLD else "UNKNOWN"
 
     def _evaluate_tracking(self, annotation: AnnotationMetadata, m5_result: Any) -> TrackingAccuracy:
         """Evaluate player tracking accuracy."""
@@ -377,6 +512,26 @@ def main() -> None:
         print(f"\nPlayer Tracking:")
         print(f"  Tracks found: {result.tracking_accuracy.tracks_found}")
         print(f"  Mean track length: {result.tracking_accuracy.mean_track_length:.1f} frames")
+
+        if result.participant_accuracy:
+            pa = result.participant_accuracy
+
+            def pct(value):
+                return "n/a" if value is None else f"{value:.2%}"
+
+            print(f"\nParticipant Classification:")
+            print(f"  Annotated: {pa.annotated_participants} participant(s), "
+                  f"{pa.annotated_non_participants} bystander(s), {pa.annotated_unknown} unknown")
+            print(f"  Precision: {pct(pa.precision)}   Recall: {pct(pa.recall)}")
+            print(f"  False-participant rate: {pct(pa.false_participant_rate)}")
+            print(f"  Unresolved rate:        {pct(pa.unresolved_rate)}")
+        else:
+            print(f"\nParticipant Classification: not scored "
+                  f"(annotation carries no resolved participant labels)")
+
+        print(f"\nValidation kind: {result.validation_kind.value.upper()}")
+        if result.validation_kind.value == "synthetic":
+            print(f"  Machinery verification only — NOT real-world validation.")
 
         print(f"\nQuality Assessment:")
         print(f"  Accuracy: {result.quality_accuracy.accuracy:.2%}")
